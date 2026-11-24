@@ -1,4 +1,6 @@
-import { LayoutDashboard, BrainCircuit, BarChart3, Siren, Wifi, WifiOff, Sparkles, ShieldCheck } from 'lucide-react'
+import { useState } from 'react'
+import { LayoutDashboard, BrainCircuit, BarChart3, Siren, Wifi, WifiOff, Sparkles, ShieldCheck, RotateCcw } from 'lucide-react'
+import { api } from '../api'
 
 const items = [
   { id: 'overview', label: 'Incident Command', icon: LayoutDashboard },
@@ -7,7 +9,26 @@ const items = [
   { id: 'benchmark', label: 'Benchmark', icon: BarChart3 },
 ]
 
-export default function Sidebar({ tab, setTab, online, mode }) {
+export default function Sidebar({ tab, setTab, online, mode, onResetDemoData }) {
+  const [resetting, setResetting] = useState(false)
+
+  const handleResetDemoData = async () => {
+    if (window.confirm('Reset all demo data (audit log, memory, incidents, ingested logs)?')) {
+      setResetting(true)
+      try {
+        await api.resetDemoData()
+        if (onResetDemoData) {
+          onResetDemoData()
+        } else {
+          window.location.reload()
+        }
+      } catch (err) {
+        alert('Failed to reset demo data: ' + err.message)
+      } finally {
+        setResetting(false)
+      }
+    }
+  }
   return (
     <aside className="glass-card w-64 shrink-0 rounded-3xl p-5 flex flex-col h-full">
       <div className="flex items-center gap-3 px-2 mb-8">
@@ -50,6 +71,15 @@ export default function Sidebar({ tab, setTab, online, mode }) {
             {mode === 'gemini' ? 'Reasoning: Gemini LLM' : 'Reasoning: offline fallback'}
           </div>
         </div>
+
+        <button
+          onClick={handleResetDemoData}
+          disabled={resetting}
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold text-rose-300/90 hover:text-rose-100 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 transition disabled:opacity-50"
+        >
+          <RotateCcw size={13} className={resetting ? 'animate-spin' : ''} />
+          {resetting ? 'Resetting…' : 'Reset demo data'}
+        </button>
       </div>
     </aside>
   )

@@ -7,8 +7,17 @@ import threading
 from typing import Optional, List, Dict, Any
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUDIT_DIR = os.path.join(ROOT_DIR, "audit")
-DEFAULT_AUDIT_LOG = os.path.join(AUDIT_DIR, "audit.log")
+
+
+def get_data_dir() -> str:
+    d = os.environ.get("DATA_DIR", os.path.join(ROOT_DIR, "data"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def get_default_audit_log() -> str:
+    return os.path.join(get_data_dir(), "audit.log")
+
 
 GENESIS_HASH = "0" * 64
 _audit_lock = threading.Lock()
@@ -49,7 +58,7 @@ def record_audit_event(
     Append-only, hash-chained audit logger.
     Events: ingested, detected, diagnosed, policy_decision, approved, rejected, applied, verified, rolled_back.
     """
-    path = log_path or DEFAULT_AUDIT_LOG
+    path = log_path or get_default_audit_log()
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
@@ -79,7 +88,7 @@ def get_audit_log(
     log_path: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Retrieve audit events, optionally filtered by incident_id."""
-    path = log_path or DEFAULT_AUDIT_LOG
+    path = log_path or get_default_audit_log()
     if not os.path.exists(path):
         return []
 
@@ -110,7 +119,7 @@ def verify_audit_chain(log_path: Optional[str] = None) -> Dict[str, Any]:
             "tampered_index": int | None,
         }
     """
-    path = log_path or DEFAULT_AUDIT_LOG
+    path = log_path or get_default_audit_log()
     if not os.path.exists(path):
         return {"verified": True, "total_entries": 0, "error": None, "tampered_index": None}
 

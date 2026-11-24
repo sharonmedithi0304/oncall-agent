@@ -92,9 +92,9 @@ export default function App() {
     setTimeout(() => setToast(''), 5000)
   }
 
-  const refreshMemory = useCallback(() => api.memory().then(setMem).catch(() => {}), [])
-  const refreshIncidents = useCallback(() => api.incidents().then(setIncidents).catch(() => {}), [])
-  const refreshServices = useCallback(() => api.services().then(setServices).catch(() => {}), [])
+  const refreshMemory = useCallback(() => api.memory().then(setMem).catch(() => { }), [])
+  const refreshIncidents = useCallback(() => api.incidents().then(setIncidents).catch(() => { }), [])
+  const refreshServices = useCallback(() => api.services().then(setServices).catch(() => { }), [])
 
   useEffect(() => {
     let alive = true
@@ -238,6 +238,16 @@ export default function App() {
     { label: 'Verify', state: anyFix ? (recovered ? 'done' : 'bad') : 'idle' },
   ]
 
+  const handleResetDemoData = () => {
+    resetRun()
+    refreshMemory()
+    refreshIncidents()
+    setCodefixProposal(null)
+    setCodefixResult(null)
+    setToast('Demo data reset successfully.')
+    setTimeout(() => setToast(''), 4000)
+  }
+
   return (
     <div className="relative h-screen w-full overflow-hidden">
       <div className="pointer-events-none absolute -top-40 -left-32 h-[28rem] w-[28rem] rounded-full bg-cyan-500/20 blur-[120px]" />
@@ -245,7 +255,7 @@ export default function App() {
       <div className="pointer-events-none absolute -bottom-40 left-1/3 h-[26rem] w-[26rem] rounded-full bg-teal-500/15 blur-[120px]" />
 
       <div className="relative flex h-full gap-5 p-5">
-        <Sidebar tab={tab} setTab={setTab} online={st.online} mode={st.mode} />
+        <Sidebar tab={tab} setTab={setTab} online={st.online} mode={st.mode} onResetDemoData={handleResetDemoData} />
 
         <main className="flex-1 h-full overflow-y-auto pr-1 pb-10">
           {tab === 'audit_policy' ? (
@@ -320,19 +330,17 @@ export default function App() {
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`glass-card rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 shadow-lg ${
-                    detectedIncident.type === 'codefix'
+                  className={`glass-card rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 shadow-lg ${detectedIncident.type === 'codefix'
                       ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200 shadow-indigo-500/10'
                       : 'border-amber-400/40 bg-amber-500/10 text-amber-200 shadow-amber-500/10'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`h-9 w-9 rounded-xl flex items-center justify-center ${
-                        detectedIncident.type === 'codefix'
+                      className={`h-9 w-9 rounded-xl flex items-center justify-center ${detectedIncident.type === 'codefix'
                           ? 'bg-indigo-500/25 text-indigo-300'
                           : 'bg-amber-500/20 text-amber-300'
-                      }`}
+                        }`}
                     >
                       <Siren size={20} className="animate-pulse" />
                     </div>
@@ -350,11 +358,10 @@ export default function App() {
                         </span>
                         {detectedIncident.policy_decision && (
                           <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${
-                              detectedIncident.policy_decision.decision === 'AUTO_APPLY'
+                            className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${detectedIncident.policy_decision.decision === 'AUTO_APPLY'
                                 ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300'
                                 : 'bg-amber-400/10 border-amber-400/30 text-amber-300'
-                            }`}
+                              }`}
                           >
                             Policy: {detectedIncident.policy_decision.decision}
                           </span>

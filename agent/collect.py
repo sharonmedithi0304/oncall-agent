@@ -4,7 +4,16 @@ import core
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_LOG_PATH = os.path.join(BASE_DIR, "app.log")
-INGESTED_LOGS_PATH = os.path.join(BASE_DIR, "audit", "ingested_logs.jsonl")
+
+
+def get_data_dir() -> str:
+    d = os.environ.get("DATA_DIR", os.path.join(BASE_DIR, "data"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def get_ingested_logs_path() -> str:
+    return os.path.join(get_data_dir(), "ingested_logs.jsonl")
 
 
 def load(path=None):
@@ -26,9 +35,10 @@ def load(path=None):
         pass
 
     # When using default log path, also incorporate records from ingested OTLP logs store
-    if is_default and os.path.exists(INGESTED_LOGS_PATH):
+    ingested_path = get_ingested_logs_path()
+    if is_default and os.path.exists(ingested_path):
         try:
-            with open(INGESTED_LOGS_PATH, "r", encoding="utf-8") as f:
+            with open(ingested_path, "r", encoding="utf-8") as f:
                 for line in f:
                     line = line.strip()
                     if not line:

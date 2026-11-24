@@ -349,3 +349,104 @@ def test_otlp_logs_ingestion_and_collect_integration():
     rows = collect.load()
     dropped_index_logs = [r for r in rows if "database index dropped" in r.get("msg", "")]
     assert len(dropped_index_logs) > 0
+
+
+# ==============================================================================
+# 7. ALERT / TELEMETRY MISMATCH & FALSE ROLLBACK PREVENTION TESTS
+# ==============================================================================
+
+def test_alert_telemetry_mismatch_returns_investigate_and_needs_approval():
+    """
+    Issue 1: Alert/telemetry mismatch.
+    If an external alert reports a problem but our collected evidence shows no degradation,
+    do NOT propose a fix. Return action 'investigate', confidence <= 0.3,
+    root_cause 'Alert reported by <source> could not be corroborated by service telemetry',
+    and proposed_fix listing what to check next. Policy engine returns NEEDS_APPROVAL.
+    """
+    import diagnose as dg
+
+    # Clean evidence with 0 errors, normal latency, no traceback
+    clean_ev = {
+        "incident_detected": False,
+        "error_count": 0,
+        "latency_trend": "normal",
+        "symptom_type": "normal",
+        "has_code_bug": False,
+        "code_exception": None,
+        "traceback": None,
+        "top_errors": [],
+    }
+
+    diag = dg.heuristic(clean_ev, past=[], tried=None, external_source="datadog")
+    assert diag["action"] == "investigate"
+    assert diag["confidence"] <= 0.3
+    assert diag["root_cause"] == "Alert reported by datadog could not be corroborated by service telemetry"
+    assert "Verify monitoring probe" in diag["proposed_fix"] or "1." in diag["proposed_fix"]
+
+    # Policy evaluation must return NEEDS_APPROVAL with that exact reason
+    pol = policy.evaluate_policy(
+        action=diag["action"],
+        confidence=diag["confidence"],
+        evidence=clean_ev,
+        source="datadog",
+        root_cause=diag["root_cause"],
+    )
+    assert pol["decision"] == "NEEDS_APPROVAL"
+    assert any("Alert reported by datadog could not be corroborated by service telemetry" in r for r in pol["reasons"])
+
+
+def test_zero_errors_and_p95_112ms_is_not_rolled_back():
+    """
+    Issue 2: False rollback prevention.
+    Judge recovery by absolute health: errors == 0 AND p95 < 500ms (configurable in policies.yaml as slo_p95_ms),
+    or p95 improved vs before. Only auto-rollback if the service is unhealthy by that definition.
+    Proves that 0 errors / p95 112ms after a fix is NOT rolled back (even when p95_before was fast e.g. 20ms during 500 errors).
+    """
+    # Absolute health: 0 errors and p95 112ms is well below slo_p95_ms (500ms)
+    before_metrics = {"errors": 5, "p95_ms": 20}
+    after_metrics = {"errors": 0, "p95_ms": 112}
+
+    healthy = policy.is_service_healthy(after_metrics, before_metrics, slo_p95_ms=500)
+    assert healthy is True, "0 errors and p95 112ms (< 500ms) must be considered healthy"
+
+    # Also test with default slo_p95_ms from policies.yaml
+    assert policy.get_slo_p95_ms() == 500
+    assert policy.is_service_healthy(after_metrics, before_metrics) is True
+
+    # Unhealthy case: errors > 0
+    unhealthy_errors = {"errors": 2, "p95_ms": 80}
+    assert policy.is_service_healthy(unhealthy_errors, before_metrics) is False
+
+    # Unhealthy case: p95 >= 500ms and not improved vs before
+    unhealthy_latency = {"errors": 0, "p95_ms": 650}
+    assert policy.is_service_healthy(unhealthy_latency, before_metrics) is False
+
+
+def test_admin_reset_demo_data_endpoint():
+    """
+    Issue 3: POST /api/admin/reset-demo-data clears audit, memory, incidents and ingested logs
+    (not benchmark results).
+    """
+    client = TestClient(agent_app)
+    import memory
+
+    # Populate some demo data
+    audit.record_audit_event("ingested", incident_id="inc-reset-test")
+    memory.remember({"signature": "test|sig", "action": "restart_service", "worked": True})
+    ingest.ingest_otlp_logs([{"ts": time.time(), "level": "INFO", "msg": "test record"}])
+
+    assert len(audit.get_audit_log()) > 0
+    assert len(memory.load()) > 0
+    assert len(ingest.get_ingested_logs()) > 0
+
+    # Call reset endpoint
+    res = client.post("/api/admin/reset-demo-data")
+    assert res.status_code == 200
+    assert res.json()["status"] == "ok"
+
+    # Verify cleared
+    assert len(audit.get_audit_log()) == 0
+    assert len(memory.load()) == 0
+    assert len(ingest.get_ingested_logs()) == 0
+    assert len(client.get("/api/incidents").json()) == 0
+

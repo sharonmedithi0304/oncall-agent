@@ -4,4 +4,5 @@ dist/
 shop.db
 app.log
 memory.json
+data/
 __pycache__/

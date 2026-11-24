@@ -7,6 +7,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_POLICY_PATH = os.path.join(ROOT_DIR, "policies.yaml")
 
 DEFAULT_POLICIES = {
+    "slo_p95_ms": 500,
     "enable_cache": {"risk_tier": "low", "auto_apply_allowed": True, "min_confidence": 0.80, "max_auto_per_hour": 5},
     "restart_service": {"risk_tier": "low", "auto_apply_allowed": True, "min_confidence": 0.80, "max_auto_per_hour": 5},
     "rollback_config": {"risk_tier": "medium", "auto_apply_allowed": False, "min_confidence": 0.85, "max_auto_per_hour": 3},
@@ -15,6 +16,7 @@ DEFAULT_POLICIES = {
     "enable_circuit_breaker": {"risk_tier": "medium", "auto_apply_allowed": False, "min_confidence": 0.85, "max_auto_per_hour": 3},
     "add_index": {"risk_tier": "high", "auto_apply_allowed": False, "min_confidence": 0.90, "max_auto_per_hour": 2},
     "codefix": {"risk_tier": "high", "auto_apply_allowed": False, "min_confidence": 0.90, "max_auto_per_hour": 2},
+    "investigate": {"risk_tier": "low", "auto_apply_allowed": False, "min_confidence": 0.80, "max_auto_per_hour": 0},
 }
 
 _AUTO_FIX_TIMESTAMPS: List[float] = []
@@ -51,6 +53,42 @@ def get_recent_auto_fixes_count(window_seconds: int = 3600) -> int:
     return len(_AUTO_FIX_TIMESTAMPS)
 
 
+def get_slo_p95_ms(policies_path: Optional[str] = None) -> float:
+    """Return the configured SLO p95 threshold in milliseconds (default 500ms)."""
+    policies = load_policies(policies_path)
+    val = policies.get("slo_p95_ms", 500)
+    try:
+        return float(val)
+    except Exception:
+        return 500.0
+
+
+def is_service_healthy(
+    after: Dict[str, Any],
+    before: Optional[Dict[str, Any]] = None,
+    slo_p95_ms: Optional[float] = None,
+) -> bool:
+    """
+    Judge recovery by absolute health:
+    errors == 0 AND p95 < 500ms (configurable in policies.yaml as slo_p95_ms),
+    or p95 improved vs before.
+    """
+    if slo_p95_ms is None:
+        slo_p95_ms = get_slo_p95_ms()
+    errors = after.get("errors", 0)
+    p95 = after.get("p95_ms")
+    if errors != 0 or p95 is None:
+        return False
+    # Absolute health: 0 errors and p95 under SLO threshold
+    if p95 < slo_p95_ms:
+        return True
+    # Or p95 improved vs before (meaningful improvement when previously exceeding SLO)
+    p95_before = before.get("p95_ms") if before else None
+    if p95_before and p95_before > slo_p95_ms and p95 <= (p95_before * 0.8):
+        return True
+    return False
+
+
 def evaluate_policy(
     action: str,
     confidence: float,
@@ -58,6 +96,8 @@ def evaluate_policy(
     memory_matches: Optional[List[Dict[str, Any]]] = None,
     policies_path: Optional[str] = None,
     is_codefix: bool = False,
+    source: Optional[str] = None,
+    root_cause: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Evaluates policy for a proposed remediation action.
@@ -74,6 +114,26 @@ def evaluate_policy(
             "max_auto_per_hour": int,
         }
     """
+    if action == "investigate":
+        src = source or (evidence.get("source") if evidence else None)
+        if not src and root_cause and "Alert reported by " in root_cause:
+            try:
+                src = root_cause.split("Alert reported by ")[1].split(" could not")[0].strip()
+            except Exception:
+                src = None
+        src = src or "external monitor"
+        reason = f"Alert reported by {src} could not be corroborated by service telemetry"
+        return {
+            "decision": "NEEDS_APPROVAL",
+            "action": "investigate",
+            "risk_tier": "low",
+            "reasons": [reason],
+            "min_confidence": 0.80,
+            "confidence": confidence,
+            "worked_in_past": False,
+            "auto_fixes_last_hour": get_recent_auto_fixes_count(),
+            "max_auto_per_hour": 0,
+        }
     policies = load_policies(policies_path)
     policy_key = "codefix" if (is_codefix or action == "codefix") else action
     policy = policies.get(policy_key, {"risk_tier": "high", "auto_apply_allowed": False, "min_confidence": 0.90, "max_auto_per_hour": 1})

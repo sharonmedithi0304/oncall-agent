@@ -7,9 +7,19 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Union
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-AUDIT_DIR = os.path.join(ROOT_DIR, "audit")
-INGESTED_LOGS_PATH = os.path.join(AUDIT_DIR, "ingested_logs.jsonl")
 SERVICES_PATH = os.path.join(ROOT_DIR, "services.yaml")
+
+
+def get_data_dir() -> str:
+    d = os.environ.get("DATA_DIR", os.path.join(ROOT_DIR, "data"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def get_ingested_logs_path(path: Optional[str] = None) -> str:
+    if path:
+        return path
+    return os.path.join(get_data_dir(), "ingested_logs.jsonl")
 
 
 def load_services(path: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -349,7 +359,13 @@ def ingest_otlp_logs(payload: dict) -> int:
     """
     records: List[Dict[str, Any]] = []
 
-    resource_logs = payload.get("resourceLogs")
+    if isinstance(payload, list):
+        records.extend(payload)
+        resource_logs = None
+    elif isinstance(payload, dict):
+        resource_logs = payload.get("resourceLogs")
+    else:
+        resource_logs = None
     if isinstance(resource_logs, list):
         for rl in resource_logs:
             res_attrs = {}
@@ -406,8 +422,9 @@ def ingest_otlp_logs(payload: dict) -> int:
         records.append(payload)
 
     if records:
-        os.makedirs(AUDIT_DIR, exist_ok=True)
-        with open(INGESTED_LOGS_PATH, "a", encoding="utf-8") as f:
+        out_path = get_ingested_logs_path()
+        os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+        with open(out_path, "a", encoding="utf-8") as f:
             for rec in records:
                 if "ts" not in rec:
                     rec["ts"] = time.time()
@@ -418,7 +435,7 @@ def ingest_otlp_logs(payload: dict) -> int:
 
 def get_ingested_logs(path: Optional[str] = None) -> List[Dict[str, Any]]:
     """Load ingested OTLP logs."""
-    p = path or INGESTED_LOGS_PATH
+    p = get_ingested_logs_path(path)
     if not os.path.exists(p):
         return []
     rows = []

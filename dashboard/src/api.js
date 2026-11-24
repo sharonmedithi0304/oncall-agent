@@ -31,4 +31,5 @@ export const api = {
   policies: () => call('/api/policies'),
   services: () => call('/api/services'),
   rollback: (incidentId) => call('/api/rollback', 'POST', { incident_id: incidentId }),
+  resetDemoData: () => call('/api/admin/reset-demo-data', 'POST'),
 }

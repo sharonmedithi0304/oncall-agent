@@ -10,6 +10,7 @@ ACTIONS = [
     "rollback_deploy",
     "enable_circuit_breaker",
     "enable_cache",
+    "investigate",
 ]
 
 MODELS = [
@@ -41,6 +42,7 @@ FIX_DESCRIPTIONS = {
     "rollback_deploy": "Roll back recent bad deployment to previous stable release (v3.8.2).",
     "enable_circuit_breaker": "Enable circuit breaker on payment-gateway to prevent cascading timeouts.",
     "enable_cache": "Enable cache layer to reduce direct database load.",
+    "investigate": "Investigate alert: verify monitoring probe health, network connectivity, and query raw telemetry.",
 }
 
 
@@ -48,7 +50,7 @@ def mode():
     return "gemini" if os.environ.get("GEMINI_API_KEY") else "offline"
 
 
-def heuristic(ev, past, tried=None):
+def heuristic(ev, past, tried=None, external_source=None):
     """
     Offline heuristic.
     First-principles guess is a fixed, plausible, evidence-based prior that is wrong for some faults.
@@ -57,6 +59,36 @@ def heuristic(ev, past, tried=None):
     Within ONE incident, tried actions (session context) may also be excluded.
     No branching on use_memory occurs inside this heuristic.
     """
+    if external_source:
+        no_degradation = (
+            ev.get("error_count", 0) == 0
+            and ev.get("latency_trend", "normal") == "normal"
+            and ev.get("symptom_type", "normal") == "normal"
+            and not ev.get("has_code_bug")
+            and not ev.get("code_exception")
+            and not ev.get("traceback")
+            and not ev.get("incident_detected", False)
+        )
+        if no_degradation:
+            source_name = external_source
+            return {
+                "root_cause": f"Alert reported by {source_name} could not be corroborated by service telemetry",
+                "confidence": 0.25,
+                "evidence_used": [
+                    "0 service errors in telemetry",
+                    "p95 latency is within normal bounds",
+                    "no exception traceback in application logs",
+                ],
+                "action": "investigate",
+                "proposed_fix": (
+                    "1. Verify monitoring probe health and alert threshold configuration. "
+                    "2. Check network connectivity between monitor probe and service cluster. "
+                    "3. Query raw telemetry and upstream gateway logs for intermittent drops."
+                ),
+                "why_plan_changed": f"Telemetry mismatch: {source_name} alert could not be corroborated by service metrics.",
+                "model_used": "telemetry-corroborator",
+            }
+
     failed_in_past = {m["action"] for m in past if not m.get("worked")}
     worked_in_past = [m["action"] for m in past if m.get("worked")]
     session_tried = set(tried or [])
@@ -152,12 +184,30 @@ def _llm(ev, past):
     return None
 
 
-def diagnose(use_memory=True, tried_actions=None, memory_path=None):
+def diagnose(use_memory=True, tried_actions=None, memory_path=None, external_source=None):
     ev = collect()
     past = recall(ev, path=memory_path) if use_memory else []
+
+    # Check for external alert telemetry mismatch
+    if external_source:
+        no_degradation = (
+            ev.get("error_count", 0) == 0
+            and ev.get("latency_trend", "normal") == "normal"
+            and ev.get("symptom_type", "normal") == "normal"
+            and not ev.get("has_code_bug")
+            and not ev.get("code_exception")
+            and not ev.get("traceback")
+            and not ev.get("incident_detected", False)
+        )
+        if no_degradation:
+            d = heuristic(ev, past, tried=tried_actions, external_source=external_source)
+            d["memories_recalled"] = len(past)
+            d["past"] = past[-3:]
+            return ev, d
+
     d = _llm(ev, past) if os.environ.get("GEMINI_API_KEY") else None
     if d is None:
-        d = heuristic(ev, past, tried=tried_actions)
+        d = heuristic(ev, past, tried=tried_actions, external_source=external_source)
     d["memories_recalled"] = len(past)
     d["past"] = past[-3:]
     return ev, d

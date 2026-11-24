@@ -2,6 +2,8 @@
 # Risk tiers: low, medium, high
 # Auto-apply allowed only for low risk when confidence >= min_confidence and memory shows it worked before
 
+slo_p95_ms: 500
+
 enable_cache:
   risk_tier: low
   auto_apply_allowed: true

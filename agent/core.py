@@ -1,5 +1,6 @@
 import json, time, threading, urllib.request, os
 from memory import remember, signature
+import policy
 
 BASE = "http://127.0.0.1:8000"
 INCIDENT = {"started": None, "wrong_attempts": 0}
@@ -92,8 +93,8 @@ def apply_fix(action, diagnosis, evidence, use_memory, memory_path=None, burst_n
     _req(f"/fix/{action}", "POST")
     n = burst_n if burst_n is not None else (8 if FAST_MODE else 10)
     after = burst(n)
-    threshold = 200 if FAST_MODE else 500
-    recovered = after["errors"] == 0 and after["p95_ms"] is not None and after["p95_ms"] < threshold
+    slo = 200 if FAST_MODE else policy.get_slo_p95_ms()
+    recovered = policy.is_service_healthy(after, before, slo_p95_ms=slo)
     secs = round(time.time() - INCIDENT["started"], 2) if INCIDENT["started"] else None
 
     if not recovered:

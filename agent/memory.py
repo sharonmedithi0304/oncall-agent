@@ -1,10 +1,21 @@
 import json, os, time
 
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = "memory.json"
 
 
+def get_data_dir() -> str:
+    d = os.environ.get("DATA_DIR", os.path.join(ROOT_DIR, "data"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 def _get_path(path=None):
-    return path or os.environ.get("MEMORY_PATH", PATH)
+    if path:
+        return path
+    if "MEMORY_PATH" in os.environ:
+        return os.environ["MEMORY_PATH"]
+    return os.path.join(get_data_dir(), PATH)
 
 
 def load(path=None):

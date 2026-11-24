@@ -68,9 +68,11 @@ def run_benchmark(
     if fast:
         core.set_fast_mode(True)
 
-    # Prepare isolated memory paths
-    memory_off_path = os.path.join(ROOT_DIR, "benchmark", "memory_off.json")
-    memory_on_path = os.path.join(ROOT_DIR, "benchmark", "memory_on.json")
+    # Prepare isolated memory paths in DATA_DIR
+    data_dir = os.environ.get("DATA_DIR", os.path.join(ROOT_DIR, "data"))
+    os.makedirs(data_dir, exist_ok=True)
+    memory_off_path = os.path.join(data_dir, "benchmark_memory_off.json")
+    memory_on_path = os.path.join(data_dir, "benchmark_memory_on.json")
     memory.clear(path=memory_off_path)
     memory.clear(path=memory_on_path)
 

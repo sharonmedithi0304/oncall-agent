@@ -2,6 +2,7 @@ import { motion } from 'framer-motion'
 import { Brain, BrainCog, Loader2, ShieldCheck, ShieldAlert, Shield, Wrench, History, RotateCcw } from 'lucide-react'
 
 const ACTION_LABEL = {
+  investigate: 'Investigate alert',
   rollback_config: 'Roll back config',
   scale_pool: 'Scale DB pool',
   restart_service: 'Restart service',
@@ -126,14 +127,21 @@ export default function DiagnosisCard({
           </div>
 
           {!result && (
-            <button
-              onClick={onApprove}
-              disabled={applying}
-              className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-900 font-semibold hover:brightness-110 disabled:opacity-60 transition flex items-center justify-center gap-2"
-            >
-              {applying ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
-              {applying ? 'Applying & verifying…' : 'Approve & apply fix'}
-            </button>
+            d.action === 'investigate' ? (
+              <div className="w-full py-2.5 px-4 rounded-xl bg-amber-400/10 border border-amber-400/30 text-amber-300 font-semibold text-xs flex items-center justify-center gap-2">
+                <ShieldAlert size={15} />
+                <span>Unconfirmed alert</span>
+              </div>
+            ) : (
+              <button
+                onClick={onApprove}
+                disabled={applying}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-400 to-teal-500 text-slate-900 font-semibold hover:brightness-110 disabled:opacity-60 transition flex items-center justify-center gap-2"
+              >
+                {applying ? <Loader2 size={16} className="animate-spin" /> : <ShieldCheck size={16} />}
+                {applying ? 'Applying & verifying…' : 'Approve & apply fix'}
+              </button>
+            )
           )}
 
           {result && (

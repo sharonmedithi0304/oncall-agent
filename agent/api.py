@@ -1,4 +1,4 @@
-import os, sys, threading, time, urllib.request, uuid, json
+import os, sys, threading, time, urllib.request, uuid, json, shutil
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -340,7 +340,7 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
             print(f"[ingest] codefix propose failed: {e}")
     else:
         try:
-            ev, d = dg.diagnose(use_memory=True)
+            ev, d = dg.diagnose(use_memory=True, external_source=source)
             inc_data["evidence"] = ev
             inc_data["diagnosis"] = d
 
@@ -350,6 +350,8 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
                 confidence=d.get("confidence", 0.7),
                 evidence=ev,
                 memory_matches=mem_matches,
+                source=source,
+                root_cause=d.get("root_cause"),
             )
             d["policy_decision"] = pol
             inc_data["policy_decision"] = pol
@@ -385,8 +387,10 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
                 p95_after = after_m.get("p95_ms") or 0
                 errors_after = after_m.get("errors", 0)
 
-                # Auto-rollback if verification fails (errors>0 or p95 worse than threshold/before)
-                if not recovered or errors_after > 0 or (p95_before > 0 and p95_after > p95_before and p95_after >= (200 if getattr(core, "FAST_MODE", False) else 500)):
+                # Auto-rollback only if unhealthy by absolute health definition
+                slo_val = 200 if getattr(core, "FAST_MODE", False) else policy.get_slo_p95_ms()
+                healthy = policy.is_service_healthy(after_m, before_m, slo_p95_ms=slo_val)
+                if not healthy:
                     execute_rollback(
                         inc_id,
                         actor="system:auto_rollback",
@@ -506,9 +510,16 @@ def reset():
 
 
 @app.post("/api/diagnose")
-def diagnose(use_memory: bool = True):
-    ev, d = dg.diagnose(use_memory)
-    if not ev["incident_detected"]:
+def diagnose(use_memory: bool = True, source: Optional[str] = None):
+    ext_source = source
+    if not ext_source:
+        with watcher_lock:
+            open_incs = [i for i in INCIDENTS if i.get("status") in ["detected", "codefix_proposed"]]
+            if open_incs and open_incs[-1].get("source") not in ["auto_detected", "watcher", None]:
+                ext_source = open_incs[-1].get("source")
+
+    ev, d = dg.diagnose(use_memory, external_source=ext_source)
+    if not ev.get("incident_detected") and not ext_source:
         raise HTTPException(400, "No incident evidence yet. Click 'Break service' first.")
 
     # Evaluate policy and attach to diagnosis
@@ -518,6 +529,8 @@ def diagnose(use_memory: bool = True):
         confidence=d.get("confidence", 0.7),
         evidence=ev,
         memory_matches=mem_matches,
+        source=ext_source,
+        root_cause=d.get("root_cause"),
     )
     d["policy_decision"] = pol
 
@@ -577,8 +590,10 @@ def fix(body: dict = Body(...)):
         p95_after = after_m.get("p95_ms") or 0
         errors_after = after_m.get("errors", 0)
 
-        # Auto-rollback if verification fails (errors>0 or p95 worse than threshold/before)
-        if not recovered or errors_after > 0 or (p95_before > 0 and p95_after > p95_before and p95_after >= (200 if getattr(core, "FAST_MODE", False) else 500)):
+        # Auto-rollback only if unhealthy by absolute health definition
+        slo_val = 200 if getattr(core, "FAST_MODE", False) else policy.get_slo_p95_ms()
+        healthy = policy.is_service_healthy(after_m, before_m, slo_p95_ms=slo_val)
+        if not healthy:
             execute_rollback(
                 inc_id,
                 actor="system:auto_rollback",
@@ -613,6 +628,53 @@ def get_memory():
 def clear_memory():
     memory.clear()
     return {"ok": True}
+
+
+@app.post("/api/admin/reset-demo-data")
+def reset_demo_data():
+    """
+    Clears audit, memory, incidents, and ingested logs (not benchmark results).
+    """
+    data_dir = os.environ.get("DATA_DIR", os.path.join(ROOT_DIR, "data"))
+
+    # 1. Clear memory
+    memory.clear()
+
+    # 2. Clear audit log
+    audit_log = os.path.join(data_dir, "audit.log")
+    if os.path.exists(audit_log):
+        try:
+            os.remove(audit_log)
+        except Exception:
+            pass
+
+    # 3. Clear ingested logs
+    ingested_logs = os.path.join(data_dir, "ingested_logs.jsonl")
+    if os.path.exists(ingested_logs):
+        try:
+            os.remove(ingested_logs)
+        except Exception:
+            pass
+
+    # 4. Clear incident reports
+    reports_dir = os.path.join(data_dir, "incident_reports")
+    if os.path.exists(reports_dir):
+        try:
+            shutil.rmtree(reports_dir)
+        except Exception:
+            pass
+
+    # 5. Clear runtime incidents, snapshots, codefix
+    with watcher_lock:
+        INCIDENTS.clear()
+    with snapshot_lock:
+        SNAPSHOTS.clear()
+    with codefix_lock:
+        CURRENT_CODEFIX["proposal"] = None
+        CURRENT_CODEFIX["approved"] = False
+        CURRENT_CODEFIX["result"] = None
+
+    return {"status": "ok", "message": "Demo data reset successfully"}
 
 
 # Benchmark endpoints

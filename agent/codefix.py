@@ -10,7 +10,18 @@ from collect import load
 DEMO_APP_DIR = os.path.join(ROOT_DIR, "demo_app")
 PRISTINE_PATH = os.path.join(DEMO_APP_DIR, "pristine", "checkout_logic.py")
 BUGS_DIR = os.path.join(DEMO_APP_DIR, "bugs")
-INCIDENT_REPORTS_DIR = os.path.join(ROOT_DIR, "incident_reports")
+
+
+def get_data_dir() -> str:
+    d = os.environ.get("DATA_DIR", os.path.join(ROOT_DIR, "data"))
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def get_reports_dir() -> str:
+    d = os.path.join(get_data_dir(), "incident_reports")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 MODELS = [
     os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"),
@@ -403,8 +414,9 @@ An unhandled `{exc_type}` occurred in `{file_path}` under checkout traffic.
 
 def write_incident_report(incident_id, tb_info, patch_info, test_results, metrics, git_info):
     """Writes detailed markdown report to incident_reports/<incident-id>.md."""
-    os.makedirs(INCIDENT_REPORTS_DIR, exist_ok=True)
-    report_path = os.path.join(INCIDENT_REPORTS_DIR, f"{incident_id}.md")
+    reports_dir = get_reports_dir()
+    os.makedirs(reports_dir, exist_ok=True)
+    report_path = os.path.join(reports_dir, f"{incident_id}.md")
 
     now_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
     md_content = f"""# Incident Report: {incident_id}

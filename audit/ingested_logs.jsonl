@@ -1,2 +1,0 @@
-{"ts": 1795504534.9784636, "level": "WARN", "msg": "database index dropped on orders(item)", "service.name": "checkout", "version": "v3.8.2", "item": "laptop"}
-{"ts": 1795508406.290498, "level": "WARN", "msg": "database index dropped on orders(item)", "service.name": "checkout", "version": "v3.8.2", "item": "laptop"}
