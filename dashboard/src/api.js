@@ -26,4 +26,9 @@ export const api = {
   codefixStatus: () => call('/api/codefix/status'),
   injectBug: (name) => call(`/api/bug/inject?name=${encodeURIComponent(name)}`, 'POST'),
   restoreBug: () => call('/api/bug/restore', 'POST'),
+  audit: (incidentId) => call(incidentId ? `/api/audit?incident_id=${encodeURIComponent(incidentId)}` : '/api/audit'),
+  auditVerify: () => call('/api/audit/verify'),
+  policies: () => call('/api/policies'),
+  services: () => call('/api/services'),
+  rollback: (incidentId) => call('/api/rollback', 'POST', { incident_id: incidentId }),
 }

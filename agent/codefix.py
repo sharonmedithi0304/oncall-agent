@@ -25,6 +25,10 @@ def parse_traceback(log_path=None):
     Returns None if no unhandled exception traceback is found.
     """
     rows = load(log_path)
+    # Only analyze logs since the last service reset
+    reset_indices = [i for i, r in enumerate(rows) if r.get("msg") == "service reset"]
+    if reset_indices:
+        rows = rows[reset_indices[-1]:]
     # Search backwards for ERROR logs with traceback or unhandled exception
     for row in reversed(rows):
         if row.get("level") == "ERROR" and (row.get("traceback") or "unhandled exception in checkout_logic" in row.get("msg", "")):

@@ -1,0 +1,11 @@
+{
+  "service": "checkout",
+  "severity": "critical",
+  "title": "Payment Gateway 504 Timeout",
+  "description": "Downstream payment-gateway timed out after 3000ms. Cascading checkout errors observed.",
+  "tags": [
+    "service:checkout",
+    "dependency:payment-gateway",
+    "env:production"
+  ]
+}

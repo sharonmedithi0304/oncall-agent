@@ -1,0 +1,51 @@
+# Policy definitions for OnCall AI remediation actions
+# Risk tiers: low, medium, high
+# Auto-apply allowed only for low risk when confidence >= min_confidence and memory shows it worked before
+
+enable_cache:
+  risk_tier: low
+  auto_apply_allowed: true
+  min_confidence: 0.80
+  max_auto_per_hour: 5
+
+restart_service:
+  risk_tier: low
+  auto_apply_allowed: true
+  min_confidence: 0.80
+  max_auto_per_hour: 5
+
+rollback_config:
+  risk_tier: medium
+  auto_apply_allowed: false
+  min_confidence: 0.85
+  max_auto_per_hour: 3
+
+rollback_deploy:
+  risk_tier: medium
+  auto_apply_allowed: false
+  min_confidence: 0.85
+  max_auto_per_hour: 3
+
+scale_pool:
+  risk_tier: medium
+  auto_apply_allowed: false
+  min_confidence: 0.85
+  max_auto_per_hour: 4
+
+enable_circuit_breaker:
+  risk_tier: medium
+  auto_apply_allowed: false
+  min_confidence: 0.85
+  max_auto_per_hour: 3
+
+add_index:
+  risk_tier: high
+  auto_apply_allowed: false
+  min_confidence: 0.90
+  max_auto_per_hour: 2
+
+codefix:
+  risk_tier: high
+  auto_apply_allowed: false
+  min_confidence: 0.90
+  max_auto_per_hour: 2

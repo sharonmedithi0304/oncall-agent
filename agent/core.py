@@ -21,7 +21,7 @@ def _req(path, method="GET", timeout=25):
 
 
 def status():
-    return _req("/metrics")
+    return _req("/metrics", timeout=2)
 
 
 def _one(results, lock):

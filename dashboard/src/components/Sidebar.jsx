@@ -1,7 +1,8 @@
-import { LayoutDashboard, BrainCircuit, BarChart3, Siren, Wifi, WifiOff, Sparkles } from 'lucide-react'
+import { LayoutDashboard, BrainCircuit, BarChart3, Siren, Wifi, WifiOff, Sparkles, ShieldCheck } from 'lucide-react'
 
 const items = [
   { id: 'overview', label: 'Incident Command', icon: LayoutDashboard },
+  { id: 'audit_policy', label: 'Audit & Policy', icon: ShieldCheck },
   { id: 'memory', label: 'Agent Memory', icon: BrainCircuit },
   { id: 'benchmark', label: 'Benchmark', icon: BarChart3 },
 ]
@@ -25,11 +26,10 @@ export default function Sidebar({ tab, setTab, online, mode }) {
           <button
             key={id}
             onClick={() => setTab(id)}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition ${
-              tab === id
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition ${tab === id
                 ? 'bg-gradient-to-r from-cyan-500/25 to-blue-500/10 text-white border border-cyan-400/30'
                 : 'text-white/60 hover:text-white hover:bg-white/5 border border-transparent'
-            }`}
+              }`}
           >
             <Icon size={18} />
             {label}

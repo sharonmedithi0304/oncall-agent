@@ -1,0 +1,8 @@
+{
+  "Type": "Notification",
+  "MessageId": "8f47c320-a15d-591b-8e11-e490518dc339",
+  "TopicArn": "arn:aws:sns:us-east-1:123456789012:oncall-cloudwatch-alarms",
+  "Subject": "ALARM: \"CheckoutQueuePoolExhaustion\" in US East (N. Virginia)",
+  "Message": "{\"AlarmName\":\"CheckoutQueuePoolExhaustion\",\"AlarmDescription\":\"Database connection pool exhausted for checkout\",\"AWSAccountId\":\"123456789012\",\"NewStateValue\":\"ALARM\",\"NewStateReason\":\"Threshold Crossed: 1 out of the last 1 datapoints [8.0] was greater than or equal to threshold [1.0].\",\"StateChangeTime\":\"2026-11-24T10:08:00.000+0000\",\"Region\":\"us-east-1\",\"AlarmArn\":\"arn:aws:cloudwatch:us-east-1:123456789012:alarm:CheckoutQueuePoolExhaustion\",\"Trigger\":{\"MetricName\":\"QueuePoolTimeout\",\"Namespace\":\"AWS/RDS\",\"Dimensions\":[{\"name\":\"ServiceName\",\"value\":\"checkout\"}]}}",
+  "Timestamp": "2026-11-24T10:08:01.000Z"
+}

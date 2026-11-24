@@ -1,0 +1,15 @@
+{
+  "id": "18492041",
+  "title": "[Triggered] High p95 latency on checkout service",
+  "text": "Checkout p95 latency is 680ms (threshold: 500ms) on prod-checkout-01. Queue pool contention detected.",
+  "date": 1732422000,
+  "event_type": "metric_alert_monitor",
+  "alert_type": "error",
+  "alert_status": "Alert",
+  "priority": "normal",
+  "tags": "env:production,service:checkout,tier:high,cluster:us-east-1",
+  "org": {
+    "id": "4210",
+    "name": "Acme Retail"
+  }
+}

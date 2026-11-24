@@ -25,6 +25,74 @@ The agent can diagnose and fix real software bugs in application source code (`d
 - **Incident Markdown Reports**: Writes comprehensive reports to `incident_reports/<incident-id>.md` documenting the timeline, root cause, diff, sandbox tests, and recovery metrics.
 - **Code Fix Memory**: Remembers past code fixes by `(exception, file)` signature to instantly reuse verified patches on recurring regressions.
 
+## System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Ingestion["1. Alert & Telemetry Ingestion"]
+        DD["Datadog Webhook"] --> IngestAPI["/api/ingest/{source}"]
+        Sentry["Sentry Issue Alert"] --> IngestAPI
+        Prom["Prometheus Alertmanager"] --> IngestAPI
+        CW["AWS CloudWatch via SNS"] --> IngestAPI
+        Generic["Generic Webhooks"] --> IngestAPI
+        OTLP["OTLP Logs Receiver"] --> LogAPI["/v1/logs"]
+        LocalLogs["Local app.log"] --> Collector
+        LogAPI --> IngestedStore[("audit/ingested_logs.jsonl")]
+        IngestedStore --> Collector["Log Collector (agent/collect.py)"]
+    end
+
+    subgraph Normalization["2. Normalization & Registry"]
+        IngestAPI -->|X-Webhook-Secret| Adapters["Adapters (agent/ingest.py)"]
+        Adapters --> IncidentModel["Unified Incident Model"]
+        ServicesYAML[("services.yaml Registry")] --> IncidentModel
+    end
+
+    subgraph Reasoning["3. Reasoning & Policy Engine"]
+        IncidentModel --> Diagnose["Diagnosis (agent/diagnose.py)"]
+        Collector --> Diagnose
+        Diagnose --> FixProposal["Proposed Fix & Evidence"]
+        FixProposal --> PolicyEngine["Policy Engine (agent/policy.py)"]
+        PoliciesYAML[("policies.yaml")] --> PolicyEngine
+        PolicyEngine -->|Decision| DecisionCheck{"AUTO_APPLY | NEEDS_APPROVAL | BLOCKED"}
+    end
+
+    subgraph Remediation["4. Safe Remediation & Rollback"]
+        DecisionCheck -->|AUTO_APPLY or Approved| Snapshot["State / Source Snapshot"]
+        Snapshot --> Execution["Apply Action / Patch (agent/core.py)"]
+        Execution --> Verification["Traffic Verification Burst"]
+        Verification --> RecCheck{"Recovered & SLO Met?"}
+        RecCheck -->|Yes| Resolved["Mark Recovered & Store Memory"]
+        RecCheck -->|No| AutoRollback["Automatic Rollback to Snapshot"]
+    end
+
+    subgraph Audit["5. Tamper-Evident Audit Trail"]
+        IncidentModel -.-> AuditLog
+        PolicyEngine -.-> AuditLog
+        Execution -.-> AuditLog
+        Verification -.-> AuditLog
+        AutoRollback -.-> AuditLog
+        AuditLog[("audit/audit.log (SHA-256 Hash Chain)")] --> AuditVerify["/api/audit/verify"]
+    end
+
+    subgraph UI["6. Glassmorphism Dashboard"]
+        AuditVerify --> Dashboard["React Dashboard (Port 5173)"]
+        IncidentModel --> Dashboard
+        PolicyEngine --> Dashboard
+        Dashboard -->|Manual Rollback| RollbackAPI["/api/rollback"]
+    end
+```
+
+## Integrations
+
+- **Alert Webhook Ingestion (`POST /api/ingest/{source}`)**: Standardized adapters normalize webhooks from **Datadog**, **Sentry**, **Prometheus Alertmanager**, **AWS CloudWatch (SNS)**, and generic payloads into unified `Incident` records (`id`, `service`, `source`, `severity`, `title`, `description`, `tags`, `started_at`, `raw`). Endpoints enforce `X-Webhook-Secret` matching `WEBHOOK_SECRET` (default `dev-secret`).
+- **OTLP / OpenTelemetry Receiver (`POST /v1/logs`)**: Minimal OTLP/HTTP JSON receiver persisting telemetry into `audit/ingested_logs.jsonl`, queried alongside local `app.log` by the log collector.
+- **Service Registry (`services.yaml`)**: Defines service catalog with ownership, repository links, and risk tiers (e.g., `checkout`, `payment-gateway`, `auth`). Incidents carry service metadata and allow dashboard filtering.
+- **Policy Engine (`agent/policy.py` & `policies.yaml`)**: Evaluates proposed fixes against risk tiers (`low`, `medium`, `high`), confidence thresholds, and hourly auto-apply limits. Returns `AUTO_APPLY`, `NEEDS_APPROVAL`, or `BLOCKED` with human-readable rationale.
+- **Tamper-Evident Audit Log (`agent/audit.py`)**: Append-only JSONL log (`audit/audit.log`) secured by deterministic SHA-256 cryptographic hash chaining. Validated via `GET /api/audit/verify`.
+- **Automated & Manual Rollbacks (`agent/api.py`)**: Takes pre-remediation state and file snapshots before every action. Automatically rolls back if post-fix verification fails (errors remain or p95 degrades past threshold), and exposes a manual rollback button on the dashboard (`POST /api/rollback`).
+- **Testing & Tooling (`tools/send_alert.py` & `samples/`)**: CLI helper to dispatch realistic sample payloads (`datadog.json`, `sentry.json`, `prometheus.json`, `cloudwatch.json`, `generic.json`) into the live pipeline.
+
+
 ## How We Measure (Memory vs No-Memory Benchmark)
 
 The benchmark runner (`python -m benchmark.run --rounds 3 --seed 42`) executes an honest, controlled comparison between two arms: **Memory OFF** and **Memory ON**.

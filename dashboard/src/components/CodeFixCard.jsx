@@ -4,6 +4,8 @@ import {
   Code2,
   Terminal,
   ShieldCheck,
+  ShieldAlert,
+  Shield,
   Loader2,
   CheckCircle2,
   XCircle,
@@ -13,6 +15,7 @@ import {
   ChevronDown,
   ChevronRight,
   Sparkles,
+  RotateCcw,
 } from 'lucide-react'
 
 export default function CodeFixCard({
@@ -20,6 +23,8 @@ export default function CodeFixCard({
   applying,
   onApprove,
   result,
+  onRollback,
+  rollingBack,
 }) {
   const [showFullTrace, setShowFullTrace] = useState(false)
   const [showSandboxOutput, setShowSandboxOutput] = useState(false)
@@ -30,6 +35,7 @@ export default function CodeFixCard({
   const diffLines = (proposal.diff || '').split('\n')
   const sandbox = proposal.sandbox_test || {}
   const isOffline = proposal.model_used === 'offline-patcher'
+  const pol = proposal.policy_decision
 
   return (
     <motion.div
@@ -71,8 +77,24 @@ export default function CodeFixCard({
           >
             {isOffline ? 'offline-patcher (rule-based)' : proposal.model_used}
           </span>
+          <span className="text-xs px-2.5 py-1 rounded-full font-semibold bg-rose-400/10 border border-rose-400/30 text-rose-300 flex items-center gap-1">
+            <Shield size={12} /> {pol?.decision || 'NEEDS_APPROVAL'} (High Risk)
+          </span>
         </div>
       </div>
+
+      {pol?.reasons && (
+        <div className="rounded-xl p-3 bg-white/5 border border-white/10 text-xs text-white/70 space-y-1">
+          <p className="font-semibold text-white/50 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+            <ShieldAlert size={12} className="text-amber-400" /> Policy Engine Evaluation
+          </p>
+          <ul className="pl-1 space-y-1">
+            {pol.reasons.map((r, i) => (
+              <li key={i}>• {r}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Root Cause & Traceback Location */}
       <div className="rounded-xl p-4 bg-white/5 border border-white/10 space-y-3">
@@ -284,6 +306,18 @@ export default function CodeFixCard({
                 </div>
               )}
             </div>
+          )}
+
+          {/* Rollback button */}
+          {onRollback && (
+            <button
+              onClick={onRollback}
+              disabled={rollingBack}
+              className="w-full mt-3 py-2 px-3 rounded-xl border border-rose-400/30 bg-rose-500/10 text-rose-300 text-xs font-semibold hover:bg-rose-500/20 transition flex items-center justify-center gap-2"
+            >
+              <RotateCcw size={14} className={rollingBack ? 'animate-spin' : ''} />
+              {rollingBack ? 'Rolling back code fix…' : 'Rollback Code Patch'}
+            </button>
           )}
         </motion.div>
       )}

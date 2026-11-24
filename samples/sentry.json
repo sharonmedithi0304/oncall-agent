@@ -1,0 +1,34 @@
+{
+  "action": "created",
+  "data": {
+    "issue": {
+      "id": "9041284",
+      "title": "AttributeError: 'NoneType' object has no attribute 'get'",
+      "culprit": "demo_app.checkout_logic in apply_discount",
+      "level": "error",
+      "type": "error",
+      "metadata": {
+        "type": "AttributeError",
+        "value": "'NoneType' object has no attribute 'get'",
+        "filename": "demo_app/checkout_logic.py"
+      },
+      "count": "38",
+      "firstSeen": "2026-11-24T10:00:00Z",
+      "lastSeen": "2026-11-24T10:04:30Z"
+    },
+    "event": {
+      "event_id": "89ab34ef12cd4567",
+      "level": "error",
+      "tags": [
+        ["service", "checkout"],
+        ["environment", "production"],
+        ["release", "v3.8.3"]
+      ],
+      "message": "AttributeError: 'NoneType' object has no attribute 'get'"
+    }
+  },
+  "actor": {
+    "id": "sentry-system",
+    "name": "Sentry Alert Bot"
+  }
+}

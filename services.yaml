@@ -1,0 +1,29 @@
+- name: checkout
+  owner: checkout-sre
+  repo: demo_app
+  risk_tier: high
+
+- name: payment-gateway
+  owner: payments-team
+  repo: payments-service
+  risk_tier: high
+
+- name: inventory
+  owner: warehouse-eng
+  repo: inventory-service
+  risk_tier: medium
+
+- name: auth
+  owner: security-team
+  repo: auth-service
+  risk_tier: high
+
+- name: catalog
+  owner: catalog-team
+  repo: catalog-service
+  risk_tier: low
+
+- name: notification
+  owner: comms-team
+  repo: notification-service
+  risk_tier: low

@@ -4,15 +4,16 @@ import core
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_LOG_PATH = os.path.join(BASE_DIR, "app.log")
+INGESTED_LOGS_PATH = os.path.join(BASE_DIR, "audit", "ingested_logs.jsonl")
 
 
 def load(path=None):
-    if path is None or path == "app.log":
-        path = DEFAULT_LOG_PATH if os.path.exists(DEFAULT_LOG_PATH) else "app.log"
+    is_default = (path is None or path == "app.log" or path == DEFAULT_LOG_PATH)
+    target_path = DEFAULT_LOG_PATH if (path is None or path == "app.log") else path
 
     rows = []
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(target_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -23,6 +24,24 @@ def load(path=None):
                     pass
     except FileNotFoundError:
         pass
+
+    # When using default log path, also incorporate records from ingested OTLP logs store
+    if is_default and os.path.exists(INGESTED_LOGS_PATH):
+        try:
+            with open(INGESTED_LOGS_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # Sort merged rows chronologically by timestamp
+    rows.sort(key=lambda r: r.get("ts", 0))
     return rows
 
 

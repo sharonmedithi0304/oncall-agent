@@ -1,0 +1,38 @@
+{
+  "version": "4",
+  "groupKey": "{}:{alertname=\"CheckoutHighLatency\"}",
+  "status": "firing",
+  "receiver": "oncall-sre-webhook",
+  "groupLabels": {
+    "alertname": "CheckoutHighLatency"
+  },
+  "commonLabels": {
+    "alertname": "CheckoutHighLatency",
+    "service": "checkout",
+    "severity": "critical",
+    "env": "production"
+  },
+  "commonAnnotations": {
+    "summary": "Checkout API p95 latency spike",
+    "description": "p95 latency is 720ms over last 2 minutes, exceeding 500ms SLO."
+  },
+  "alerts": [
+    {
+      "status": "firing",
+      "labels": {
+        "alertname": "CheckoutHighLatency",
+        "service": "checkout",
+        "severity": "critical",
+        "instance": "pod-checkout-web-99",
+        "region": "us-east-1"
+      },
+      "annotations": {
+        "summary": "Checkout API p95 latency spike",
+        "description": "p95 latency is 720ms over last 2 minutes, exceeding 500ms SLO."
+      },
+      "startsAt": "2026-11-24T10:05:00.000Z",
+      "endsAt": "0001-01-01T00:00:00Z",
+      "fingerprint": "a93b4f6e1234abcd"
+    }
+  ]
+}

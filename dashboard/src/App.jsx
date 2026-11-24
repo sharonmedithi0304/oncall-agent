@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Timer, TriangleAlert, Database, Brain, Flame, RotateCcw, Activity, ArrowUpRight, X, Siren, HardDrive, Code2 } from 'lucide-react'
+import {
+  Timer,
+  TriangleAlert,
+  Database,
+  Brain,
+  Flame,
+  RotateCcw,
+  Activity,
+  ArrowUpRight,
+  X,
+  Siren,
+  HardDrive,
+  Code2,
+  Filter,
+  Radio,
+  Layers,
+} from 'lucide-react'
 import { api } from './api'
 import Sidebar from './components/Sidebar'
 import StatsCard from './components/StatsCard'
@@ -10,6 +26,7 @@ import DiagnosisCard from './components/DiagnosisCard'
 import CodeFixCard from './components/CodeFixCard'
 import MemoryView from './components/MemoryView'
 import BenchmarkView from './components/BenchmarkView'
+import AuditPolicyView from './components/AuditPolicyView'
 
 const FAULT_OPTIONS = [
   { id: 'pool_exhaustion', label: 'Pool Exhaustion' },
@@ -23,6 +40,35 @@ const FAULT_OPTIONS = [
   { id: 'key_error', label: 'Code Bug: Missing Dict Key (KeyError)' },
 ]
 
+const SOURCE_STYLES = {
+  datadog: 'bg-purple-500/15 border-purple-500/30 text-purple-300',
+  sentry: 'bg-rose-500/15 border-rose-500/30 text-rose-300',
+  prometheus: 'bg-orange-500/15 border-orange-500/30 text-orange-300',
+  cloudwatch: 'bg-amber-500/15 border-amber-500/30 text-amber-300',
+  auto_detected: 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300',
+  generic: 'bg-slate-500/15 border-slate-500/30 text-slate-300',
+}
+
+const SOURCE_LABELS = {
+  datadog: 'Datadog',
+  sentry: 'Sentry',
+  prometheus: 'Prometheus',
+  cloudwatch: 'CloudWatch',
+  auto_detected: 'Auto-detected',
+  generic: 'Generic',
+}
+
+function SourceBadge({ source }) {
+  const norm = (source || 'auto_detected').toLowerCase()
+  const cls = SOURCE_STYLES[norm] || SOURCE_STYLES.generic
+  const label = SOURCE_LABELS[norm] || source
+  return (
+    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${cls}`}>
+      <Radio size={11} /> {label}
+    </span>
+  )
+}
+
 export default function App() {
   const [tab, setTab] = useState('overview')
   const [st, setSt] = useState({ online: false })
@@ -32,11 +78,14 @@ export default function App() {
   const [busy, setBusy] = useState('')
   const [mem, setMem] = useState([])
   const [incidents, setIncidents] = useState([])
+  const [services, setServices] = useState([])
+  const [selectedService, setSelectedService] = useState('all')
   const [selectedFault, setSelectedFault] = useState('pool_exhaustion')
   const [toast, setToast] = useState('')
   const [codefixProposal, setCodefixProposal] = useState(null)
   const [codefixResult, setCodefixResult] = useState(null)
   const [codefixApplying, setCodefixApplying] = useState(false)
+  const [rollingBack, setRollingBack] = useState(false)
 
   const fail = (e) => {
     setToast(e.message || String(e))
@@ -45,6 +94,7 @@ export default function App() {
 
   const refreshMemory = useCallback(() => api.memory().then(setMem).catch(() => {}), [])
   const refreshIncidents = useCallback(() => api.incidents().then(setIncidents).catch(() => {}), [])
+  const refreshServices = useCallback(() => api.services().then(setServices).catch(() => {}), [])
 
   useEffect(() => {
     let alive = true
@@ -69,12 +119,13 @@ export default function App() {
     }
     tick()
     refreshMemory()
+    refreshServices()
     const id = setInterval(tick, 1500)
     return () => {
       alive = false
       clearInterval(id)
     }
-  }, [refreshMemory, codefixProposal])
+  }, [refreshMemory, refreshServices, codefixProposal])
 
   const resetRun = () => {
     setDiag({ off: null, on: null })
@@ -134,7 +185,27 @@ export default function App() {
     refreshMemory()
   }
 
-  const detectedIncident = incidents.find((i) => i.status === 'detected' || i.status === 'codefix_proposed')
+  const handleRollback = async (incidentId) => {
+    setRollingBack(true)
+    try {
+      await api.rollback(incidentId)
+      setToast('Rollback completed: state restored and audit entry logged')
+      setTimeout(() => setToast(''), 4000)
+      refreshIncidents()
+      setFixes({ off: null, on: null })
+      setCodefixResult(null)
+    } catch (e) {
+      fail(e)
+    }
+    setRollingBack(false)
+  }
+
+  // Filter incidents by service
+  const filteredIncidents = incidents.filter(
+    (i) => selectedService === 'all' || (i.service || 'checkout') === selectedService
+  )
+
+  const detectedIncident = filteredIncidents.find((i) => i.status === 'detected' || i.status === 'codefix_proposed')
 
   const openDetectedIncident = (inc) => {
     if (inc.type === 'codefix' && inc.codefix_proposal) {
@@ -177,7 +248,9 @@ export default function App() {
         <Sidebar tab={tab} setTab={setTab} online={st.online} mode={st.mode} />
 
         <main className="flex-1 h-full overflow-y-auto pr-1 pb-10">
-          {tab === 'memory' ? (
+          {tab === 'audit_policy' ? (
+            <AuditPolicyView />
+          ) : tab === 'memory' ? (
             <MemoryView items={mem} onClear={clearMemory} />
           ) : tab === 'benchmark' ? (
             <BenchmarkView />
@@ -194,7 +267,26 @@ export default function App() {
                     </span>
                   </p>
                 </div>
+
                 <div className="flex items-center gap-3 flex-wrap">
+                  {/* Service registry filter */}
+                  <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white/80">
+                    <Layers size={14} className="text-cyan-400" />
+                    <span className="text-white/40">Service:</span>
+                    <select
+                      value={selectedService}
+                      onChange={(e) => setSelectedService(e.target.value)}
+                      className="bg-transparent text-white focus:outline-none cursor-pointer font-medium"
+                    >
+                      <option value="all" className="bg-slate-900 text-white">All Services</option>
+                      {services.map((s) => (
+                        <option key={s.name} value={s.name} className="bg-slate-900 text-white font-mono">
+                          {s.name} ({s.risk_tier})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <button onClick={reset} disabled={!st.online || !!busy} className="flex items-center gap-2 px-4 py-2.5 rounded-xl glass-soft text-sm text-white/70 hover:text-white hover:bg-white/10 transition disabled:opacity-40">
                     <RotateCcw size={15} /> Reset
                   </button>
@@ -245,26 +337,51 @@ export default function App() {
                       <Siren size={20} className="animate-pulse" />
                     </div>
                     <div>
-                      <p className="font-semibold text-white flex items-center gap-2">
-                        {detectedIncident.type === 'codefix' ? 'Code Bug Incident Auto-Detected' : 'Incident Auto-Detected'}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-white">
+                          {detectedIncident.type === 'codefix' ? 'Code Bug Incident' : 'Infrastructure Incident'}
+                        </p>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white font-mono">
                           {detectedIncident.id}
                         </span>
-                      </p>
-                      <p className="text-xs text-white/70">
-                        {detectedIncident.type === 'codefix'
-                          ? 'Unhandled exception traceback detected in app.log. Sandbox tested patch generated.'
-                          : 'Elevated latency or 5xx error rate sustained for 3 consecutive polls (6s). Background agent ran diagnosis automatically.'}
+                        <SourceBadge source={detectedIncident.source} />
+                        <span className="text-xs px-2 py-0.5 rounded-full font-mono bg-cyan-400/15 text-cyan-300 border border-cyan-400/30">
+                          svc: {detectedIncident.service || 'checkout'}
+                        </span>
+                        {detectedIncident.policy_decision && (
+                          <span
+                            className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${
+                              detectedIncident.policy_decision.decision === 'AUTO_APPLY'
+                                ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300'
+                                : 'bg-amber-400/10 border-amber-400/30 text-amber-300'
+                            }`}
+                          >
+                            Policy: {detectedIncident.policy_decision.decision}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-white/70 mt-0.5">
+                        {detectedIncident.title || 'Incident detected by telemetry watcher.'}
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={() => openDetectedIncident(detectedIncident)}
-                    className="px-4 py-2 rounded-xl bg-white text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md"
-                  >
-                    {detectedIncident.type === 'codefix' ? <Code2 size={14} /> : <Brain size={14} />}
-                    {detectedIncident.type === 'codefix' ? 'View Code Fix Patch' : 'View Diagnosis'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => openDetectedIncident(detectedIncident)}
+                      className="px-4 py-2 rounded-xl bg-white text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md"
+                    >
+                      {detectedIncident.type === 'codefix' ? <Code2 size={14} /> : <Brain size={14} />}
+                      {detectedIncident.type === 'codefix' ? 'View Code Fix Patch' : 'View Diagnosis'}
+                    </button>
+                    <button
+                      onClick={() => handleRollback(detectedIncident.id)}
+                      disabled={rollingBack}
+                      className="px-3 py-2 rounded-xl border border-rose-400/30 bg-rose-500/10 text-rose-300 font-semibold text-xs hover:bg-rose-500/20 transition flex items-center gap-1.5"
+                      title="Rollback fix to pre-incident state"
+                    >
+                      <RotateCcw size={13} className={rollingBack ? 'animate-spin' : ''} /> Rollback
+                    </button>
+                  </div>
                 </motion.div>
               )}
 
@@ -352,6 +469,8 @@ export default function App() {
                     applying={codefixApplying}
                     onApprove={approveCodefix}
                     result={codefixResult}
+                    onRollback={() => handleRollback(codefixProposal.incident_id)}
+                    rollingBack={rollingBack}
                   />
                 </div>
               )}
@@ -359,8 +478,30 @@ export default function App() {
               <div id="diagnosis-section">
                 <h2 className="text-xl font-semibold mb-3">Same incident, with and without memory</h2>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <DiagnosisCard memoryOn={false} data={diag.off} busy={busy === 'off'} canRun={canDiagnose} onRun={() => diagnose(false)} onApprove={() => approve('off')} applying={busy === 'fix-off'} result={fixes.off} />
-                  <DiagnosisCard memoryOn data={diag.on} busy={busy === 'on'} canRun={canDiagnose} onRun={() => diagnose(true)} onApprove={() => approve('on')} applying={busy === 'fix-on'} result={fixes.on} />
+                  <DiagnosisCard
+                    memoryOn={false}
+                    data={diag.off}
+                    busy={busy === 'off'}
+                    canRun={canDiagnose}
+                    onRun={() => diagnose(false)}
+                    onApprove={() => approve('off')}
+                    applying={busy === 'fix-off'}
+                    result={fixes.off}
+                    onRollback={() => handleRollback(detectedIncident?.id)}
+                    rollingBack={rollingBack}
+                  />
+                  <DiagnosisCard
+                    memoryOn
+                    data={diag.on}
+                    busy={busy === 'on'}
+                    canRun={canDiagnose}
+                    onRun={() => diagnose(true)}
+                    onApprove={() => approve('on')}
+                    applying={busy === 'fix-on'}
+                    result={fixes.on}
+                    onRollback={() => handleRollback(detectedIncident?.id)}
+                    rollingBack={rollingBack}
+                  />
                 </div>
                 {!canDiagnose && st.online && <p className="text-sm text-white/40 mt-3">Click “Break service” to inject a failure, then let the agent investigate.</p>}
               </div>
@@ -371,7 +512,7 @@ export default function App() {
 
       <AnimatePresence>
         {toast && (
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="fixed bottom-6 right-6 glass-card rounded-xl px-4 py-3 text-sm text-rose-200 flex items-center gap-3 max-w-sm">
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="fixed bottom-6 right-6 glass-card rounded-xl px-4 py-3 text-sm text-cyan-200 flex items-center gap-3 max-w-sm shadow-xl">
             {toast}
             <button onClick={() => setToast('')}><X size={14} /></button>
           </motion.div>
