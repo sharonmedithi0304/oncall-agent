@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Timer, TriangleAlert, Database, Brain, Flame, RotateCcw, Activity, ArrowUpRight, X, Siren, HardDrive } from 'lucide-react'
+import { Timer, TriangleAlert, Database, Brain, Flame, RotateCcw, Activity, ArrowUpRight, X, Siren, HardDrive, Code2 } from 'lucide-react'
 import { api } from './api'
 import Sidebar from './components/Sidebar'
 import StatsCard from './components/StatsCard'
 import Sparkline from './components/Sparkline'
 import Pipeline from './components/Pipeline'
 import DiagnosisCard from './components/DiagnosisCard'
+import CodeFixCard from './components/CodeFixCard'
 import MemoryView from './components/MemoryView'
 import BenchmarkView from './components/BenchmarkView'
 
@@ -17,6 +18,9 @@ const FAULT_OPTIONS = [
   { id: 'memory_leak', label: 'Memory Leak' },
   { id: 'downstream_timeout', label: 'Downstream Timeout' },
   { id: 'cache_disabled', label: 'Cache Disabled' },
+  { id: 'discount_null', label: 'Code Bug: Discount Null (AttributeError)' },
+  { id: 'off_by_one', label: 'Code Bug: Off-By-One (IndexError)' },
+  { id: 'key_error', label: 'Code Bug: Missing Dict Key (KeyError)' },
 ]
 
 export default function App() {
@@ -30,6 +34,9 @@ export default function App() {
   const [incidents, setIncidents] = useState([])
   const [selectedFault, setSelectedFault] = useState('pool_exhaustion')
   const [toast, setToast] = useState('')
+  const [codefixProposal, setCodefixProposal] = useState(null)
+  const [codefixResult, setCodefixResult] = useState(null)
+  const [codefixApplying, setCodefixApplying] = useState(false)
 
   const fail = (e) => {
     setToast(e.message || String(e))
@@ -43,11 +50,19 @@ export default function App() {
     let alive = true
     const tick = async () => {
       try {
-        const [s, incList] = await Promise.all([api.state(), api.incidents()])
+        const [s, incList, cfStatus] = await Promise.all([
+          api.state(),
+          api.incidents(),
+          api.codefixStatus().catch(() => ({})),
+        ])
         if (!alive) return
         setSt(s)
         if (Array.isArray(incList)) setIncidents(incList)
         if (s.online) setHist((h) => [...h.slice(-29), s.p95_ms])
+        if (cfStatus?.proposal && !codefixProposal) {
+          setCodefixProposal(cfStatus.proposal)
+          if (cfStatus.result) setCodefixResult(cfStatus.result)
+        }
       } catch {
         if (alive) setSt((s) => ({ ...s, online: false }))
       }
@@ -59,11 +74,13 @@ export default function App() {
       alive = false
       clearInterval(id)
     }
-  }, [refreshMemory])
+  }, [refreshMemory, codefixProposal])
 
   const resetRun = () => {
     setDiag({ off: null, on: null })
     setFixes({ off: null, on: null })
+    setCodefixProposal(null)
+    setCodefixResult(null)
   }
 
   const run = async (name, fn) => {
@@ -82,6 +99,14 @@ export default function App() {
     run(useMemory ? 'on' : 'off', async () => {
       const r = await api.diagnose(useMemory)
       setDiag((d) => ({ ...d, [useMemory ? 'on' : 'off']: r }))
+      if (r.evidence?.has_code_bug) {
+        try {
+          const prop = await api.codefixPropose()
+          setCodefixProposal(prop)
+        } catch (e) {
+          console.error('codefix proposal error', e)
+        }
+      }
     })
   const approve = (which) =>
     run('fix-' + which, async () => {
@@ -91,14 +116,33 @@ export default function App() {
       refreshMemory()
       refreshIncidents()
     })
+  const approveCodefix = async () => {
+    if (!codefixProposal) return
+    setCodefixApplying(true)
+    try {
+      const res = await api.codefixApprove(codefixProposal)
+      setCodefixResult(res)
+      refreshMemory()
+      refreshIncidents()
+    } catch (e) {
+      fail(e)
+    }
+    setCodefixApplying(false)
+  }
   const clearMemory = async () => {
     await api.clearMemory().catch(fail)
     refreshMemory()
   }
 
-  const detectedIncident = incidents.find((i) => i.status === 'detected')
+  const detectedIncident = incidents.find((i) => i.status === 'detected' || i.status === 'codefix_proposed')
 
   const openDetectedIncident = (inc) => {
+    if (inc.type === 'codefix' && inc.codefix_proposal) {
+      setCodefixProposal(inc.codefix_proposal)
+      const el = document.getElementById('codefix-section')
+      if (el) el.scrollIntoView({ behavior: 'smooth' })
+      return
+    }
     if (inc.diagnosis && inc.evidence) {
       setDiag((d) => ({ ...d, on: { diagnosis: inc.diagnosis, evidence: inc.evidence, use_memory: true } }))
     } else {
@@ -184,29 +228,42 @@ export default function App() {
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="glass-card rounded-2xl p-4 border-amber-400/40 bg-amber-500/10 text-amber-200 flex items-center justify-between flex-wrap gap-3 shadow-lg shadow-amber-500/10"
+                  className={`glass-card rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 shadow-lg ${
+                    detectedIncident.type === 'codefix'
+                      ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200 shadow-indigo-500/10'
+                      : 'border-amber-400/40 bg-amber-500/10 text-amber-200 shadow-amber-500/10'
+                  }`}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="h-9 w-9 rounded-xl bg-amber-500/20 flex items-center justify-center text-amber-300">
+                    <div
+                      className={`h-9 w-9 rounded-xl flex items-center justify-center ${
+                        detectedIncident.type === 'codefix'
+                          ? 'bg-indigo-500/25 text-indigo-300'
+                          : 'bg-amber-500/20 text-amber-300'
+                      }`}
+                    >
                       <Siren size={20} className="animate-pulse" />
                     </div>
                     <div>
                       <p className="font-semibold text-white flex items-center gap-2">
-                        Incident Auto-Detected
-                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-400/20 text-amber-200 font-mono">
+                        {detectedIncident.type === 'codefix' ? 'Code Bug Incident Auto-Detected' : 'Incident Auto-Detected'}
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white font-mono">
                           {detectedIncident.id}
                         </span>
                       </p>
-                      <p className="text-xs text-amber-200/70">
-                        Elevated latency or 5xx error rate sustained for 3 consecutive polls (6s). Background agent ran diagnosis automatically.
+                      <p className="text-xs text-white/70">
+                        {detectedIncident.type === 'codefix'
+                          ? 'Unhandled exception traceback detected in app.log. Sandbox tested patch generated.'
+                          : 'Elevated latency or 5xx error rate sustained for 3 consecutive polls (6s). Background agent ran diagnosis automatically.'}
                       </p>
                     </div>
                   </div>
                   <button
                     onClick={() => openDetectedIncident(detectedIncident)}
-                    className="px-4 py-2 rounded-xl bg-amber-400 text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md shadow-amber-400/20"
+                    className="px-4 py-2 rounded-xl bg-white text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md"
                   >
-                    <Brain size={14} /> View Diagnosis
+                    {detectedIncident.type === 'codefix' ? <Code2 size={14} /> : <Brain size={14} />}
+                    {detectedIncident.type === 'codefix' ? 'View Code Fix Patch' : 'View Diagnosis'}
                   </button>
                 </motion.div>
               )}
@@ -235,23 +292,43 @@ export default function App() {
                 <div className="glass-card rounded-2xl p-6">
                   <p className="font-semibold mb-3">Evidence</p>
                   {evidence ? (
-                    <dl className="space-y-2 text-sm">
-                      {[
-                        ['Version', evidence.version],
-                        ['p95 before', `${evidence.p95_before_ms}ms`],
-                        ['p95 during', `${evidence.p95_after_ms}ms`],
-                        ['Errors', evidence.error_count],
-                        ['Top error', evidence.top_errors?.[0]?.[0] || '—'],
-                        ['Symptom', evidence.symptom_type || '—'],
-                        ['First error', evidence.first_error_secs_after_change != null ? `${evidence.first_error_secs_after_change}s after change` : '—'],
-                        ['Config change', evidence.last_config_change ? `pool_hold_s=${evidence.last_config_change.pool_hold_s}` : '—'],
-                      ].map(([k, v]) => (
-                        <div key={k} className="flex justify-between gap-3">
-                          <dt className="text-white/45 shrink-0">{k}</dt>
-                          <dd className="text-white/85 text-right truncate" title={String(v)}>{v}</dd>
-                        </div>
-                      ))}
-                    </dl>
+                    <div className="space-y-3">
+                      <dl className="space-y-2 text-sm">
+                        {[
+                          ['Version', evidence.version],
+                          ['p95 before', `${evidence.p95_before_ms}ms`],
+                          ['p95 during', `${evidence.p95_after_ms}ms`],
+                          ['Errors', evidence.error_count],
+                          ['Top error', evidence.top_errors?.[0]?.[0] || '—'],
+                          ['Symptom', evidence.symptom_type || '—'],
+                          evidence.has_code_bug && ['Code Bug', evidence.code_exception],
+                          evidence.has_code_bug && ['Source File', `${evidence.code_file}:${evidence.code_line}`],
+                          ['First error', evidence.first_error_secs_after_change != null ? `${evidence.first_error_secs_after_change}s after change` : '—'],
+                          ['Config change', evidence.last_config_change ? `pool_hold_s=${evidence.last_config_change.pool_hold_s}` : '—'],
+                        ].filter(Boolean).map(([k, v]) => (
+                          <div key={k} className="flex justify-between gap-3">
+                            <dt className="text-white/45 shrink-0">{k}</dt>
+                            <dd className="text-white/85 text-right truncate" title={String(v)}>{v}</dd>
+                          </div>
+                        ))}
+                      </dl>
+
+                      {evidence.has_code_bug && !codefixProposal && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const p = await api.codefixPropose()
+                              setCodefixProposal(p)
+                            } catch (e) {
+                              fail(e)
+                            }
+                          }}
+                          className="w-full py-2 px-3 rounded-xl bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 text-xs font-semibold hover:bg-indigo-500/30 transition flex items-center justify-center gap-1.5"
+                        >
+                          <Code2 size={13} /> Propose Code Fix
+                        </button>
+                      )}
+                    </div>
                   ) : (
                     <p className="text-sm text-white/45">Parsed from logs and metrics when the agent investigates.</p>
                   )}
@@ -261,6 +338,23 @@ export default function App() {
               <div className="glass-card rounded-2xl p-5">
                 <Pipeline steps={steps} />
               </div>
+
+              {codefixProposal && (
+                <div id="codefix-section" className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-white">
+                      <Code2 className="text-indigo-400" size={20} /> Real Code Fix
+                    </h2>
+                    <span className="text-xs text-white/50">Verified in sandbox pytest</span>
+                  </div>
+                  <CodeFixCard
+                    proposal={codefixProposal}
+                    applying={codefixApplying}
+                    onApprove={approveCodefix}
+                    result={codefixResult}
+                  />
+                </div>
+              )}
 
               <div id="diagnosis-section">
                 <h2 className="text-xl font-semibold mb-3">Same incident, with and without memory</h2>

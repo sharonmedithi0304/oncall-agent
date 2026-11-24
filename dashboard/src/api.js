@@ -21,4 +21,9 @@ export const api = {
   benchmark: () => call('/api/benchmark'),
   runBenchmark: (rounds = 3, seed = 42) => call('/api/benchmark/run', 'POST', { rounds, seed }),
   benchmarkStatus: () => call('/api/benchmark/status'),
+  codefixPropose: (incidentId) => call('/api/codefix/propose', 'POST', { incident_id: incidentId }),
+  codefixApprove: (proposal) => call('/api/codefix/approve', 'POST', { proposal }),
+  codefixStatus: () => call('/api/codefix/status'),
+  injectBug: (name) => call(`/api/bug/inject?name=${encodeURIComponent(name)}`, 'POST'),
+  restoreBug: () => call('/api/bug/restore', 'POST'),
 }

@@ -120,8 +120,17 @@ def collect(path=None):
     last_config_change = next((r for r in reversed(rows) if r.get("msg") == "config changed"), None)
     pool_size = errs[0].get("pool_size") if errs else (last_config_change.get("pool_size") if last_config_change else None)
 
+    code_err = next((r for r in reversed(errs) if r.get("traceback")), None)
+    has_code_bug = bool(code_err)
+
     return {
-        "incident_detected": incident_detected,
+        "incident_detected": incident_detected or has_code_bug,
+        "has_code_bug": has_code_bug,
+        "code_exception": code_err.get("exception") if code_err else None,
+        "code_file": code_err.get("file") if code_err else None,
+        "code_line": code_err.get("line") if code_err else None,
+        "code_function": code_err.get("function") if code_err else None,
+        "traceback": code_err.get("traceback") if code_err else None,
         "version": current_version,
         "version_changed": version_changed,
         "last_config_change": last_config_change,

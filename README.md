@@ -13,6 +13,18 @@ Breaks a real service, finds the root cause from logs, asks for approval, applie
 | `downstream_timeout` | 504 errors (`payment-gateway timeout`), 3s delay | `enable_circuit_breaker` | `restart_service` | Downstream payment provider hangs |
 | `cache_disabled` | High p95 latency (0.6-0.8s), 0 errors | `enable_cache` | `scale_pool` | Cache layer disabled, all requests hit DB |
 
+## Real Code Fix Pipeline
+
+The agent can diagnose and fix real software bugs in application source code (`demo_app/checkout_logic.py`):
+- **Traceback Ingestion**: Unhandled exceptions log full JSON stack traces (file, line number, exception class, frames) to `app.log`.
+- **Patch Generation**: Unified diff generated via Gemini LLM (with model fallback) or deterministic offline patcher (`offline-patcher`).
+- **Safety Whitelist**: Strict path validation prevents diffs from modifying any file outside `demo_app/`.
+- **Sandbox Pre-Verification**: Copies code and tests to an isolated temporary sandbox, executes `pytest tests/test_checkout_logic.py`, and confirms tests fail before the patch and pass after the patch.
+- **Human Approval & Hot Reload**: Patches are applied to the real workspace only upon operator approval, followed by module hot-reloading and verification traffic bursts.
+- **Git & GitHub PR**: Automatically creates branch `fix/<incident-id>`, commits the patch locally, and opens a GitHub PR if `GITHUB_TOKEN` is present (or outputs compare URL / PR body).
+- **Incident Markdown Reports**: Writes comprehensive reports to `incident_reports/<incident-id>.md` documenting the timeline, root cause, diff, sandbox tests, and recovery metrics.
+- **Code Fix Memory**: Remembers past code fixes by `(exception, file)` signature to instantly reuse verified patches on recurring regressions.
+
 ## How We Measure (Memory vs No-Memory Benchmark)
 
 The benchmark runner (`python -m benchmark.run --rounds 3 --seed 42`) executes an honest, controlled comparison between two arms: **Memory OFF** and **Memory ON**.

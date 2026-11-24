@@ -1,8 +1,10 @@
-import time, json, logging, threading, random, os
+import time, json, logging, threading, random, os, sys, traceback, shutil, importlib
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+import demo_app.checkout_logic as checkout_logic
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOG_PATH = os.path.join(BASE_DIR, "app.log")
@@ -70,7 +72,7 @@ def set_fast_mode(enabled: bool = True):
 
 
 @app.post("/checkout")
-def checkout(item: str = "book", qty: int = 1):
+def checkout(item: str = "book", qty: int = 4):
     global VERSION
     t = time.time()
 
@@ -80,6 +82,32 @@ def checkout(item: str = "book", qty: int = 1):
             ERR.append(time.time())
         log("ERROR", "NullReference in apply_discount", version=VERSION, item=item)
         raise HTTPException(500, "Internal Server Error: NullReference in apply_discount")
+
+    # Real code execution: execute checkout_logic
+    try:
+        calc_result = checkout_logic.calculate_checkout(item, qty)
+    except Exception as e:
+        with lock:
+            ERR.append(time.time())
+        tb_str = traceback.format_exc()
+        extracted_tb = traceback.extract_tb(sys.exc_info()[2])
+        last_frames = [
+            {"file": f.filename, "line": f.lineno, "func": f.name, "code": f.line}
+            for f in extracted_tb[-5:]
+        ]
+        last_frame = extracted_tb[-1] if extracted_tb else None
+        log(
+            "ERROR",
+            f"unhandled exception in checkout_logic: {type(e).__name__}: {str(e)}",
+            exception=type(e).__name__,
+            message=str(e),
+            file=last_frame.filename if last_frame else "",
+            line=last_frame.lineno if last_frame else 0,
+            function=last_frame.name if last_frame else "",
+            traceback=tb_str,
+            last_frames=last_frames,
+        )
+        raise HTTPException(500, f"Internal Server Error: {type(e).__name__}: {str(e)}")
 
     # Fault 5: downstream_timeout - payment provider call sleeps then raises
     if FAULTS["downstream_timeout"]:
@@ -233,6 +261,49 @@ def fix(action: str):
     }
 
 
+@app.post("/bug/inject")
+def bug_inject(name: str):
+    valid_variants = {
+        "discount_null": "discount_null.py",
+        "1": "discount_null.py",
+        "off_by_one": "off_by_one.py",
+        "2": "off_by_one.py",
+        "key_error": "key_error.py",
+        "3": "key_error.py",
+    }
+    variant_file = valid_variants.get(name)
+    if not variant_file:
+        raise HTTPException(400, f"unknown bug variant {name}, valid: discount_null, off_by_one, key_error")
+
+    src = os.path.join(BASE_DIR, "demo_app", "bugs", variant_file)
+    dst = os.path.join(BASE_DIR, "demo_app", "checkout_logic.py")
+    if not os.path.exists(src):
+        raise HTTPException(404, f"variant file not found: {src}")
+
+    shutil.copyfile(src, dst)
+    importlib.reload(checkout_logic)
+    log("WARN", f"code bug injected: {name}", bug=name, file="checkout_logic.py")
+    return {"ok": True, "injected": name, "file": "checkout_logic.py"}
+
+
+@app.post("/bug/restore")
+def bug_restore():
+    pristine_path = os.path.join(BASE_DIR, "demo_app", "pristine", "checkout_logic.py")
+    dst = os.path.join(BASE_DIR, "demo_app", "checkout_logic.py")
+    if os.path.exists(pristine_path):
+        shutil.copyfile(pristine_path, dst)
+        importlib.reload(checkout_logic)
+    log("INFO", "checkout_logic restored to pristine")
+    return {"ok": True, "restored": True}
+
+
+@app.post("/bug/reload")
+def bug_reload():
+    importlib.reload(checkout_logic)
+    log("INFO", "checkout_logic reloaded")
+    return {"ok": True, "reloaded": True}
+
+
 @app.post("/reset")
 def reset():
     global VERSION
@@ -242,6 +313,11 @@ def reset():
     LEAK_BUFFER.clear()
     S["engine"] = make_engine(5)
     S["pool_size"] = 5
+    pristine_path = os.path.join(BASE_DIR, "demo_app", "pristine", "checkout_logic.py")
+    dst = os.path.join(BASE_DIR, "demo_app", "checkout_logic.py")
+    if os.path.exists(pristine_path):
+        shutil.copyfile(pristine_path, dst)
+        importlib.reload(checkout_logic)
     with lock:
         LAT.clear()
         ERR.clear()

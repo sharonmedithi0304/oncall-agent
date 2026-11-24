@@ -51,11 +51,34 @@ def break_service(fault="pool_exhaustion", burst_n=None):
     _req("/reset", "POST")  # start every incident from a clean, reproducible state
     if fault == "pool":
         fault = "pool_exhaustion"
-    _req(f"/fault/{fault}?on=true", "POST")
+
+    # Support code bug variants as break targets
+    code_bugs = {"discount_null", "off_by_one", "key_error"}
+    if fault.startswith("bug:"):
+        bug_name = fault[4:]
+        _req(f"/bug/inject?name={bug_name}", "POST")
+    elif fault in code_bugs:
+        _req(f"/bug/inject?name={fault}", "POST")
+    else:
+        _req(f"/fault/{fault}?on=true", "POST")
+
     INCIDENT["started"] = time.time()
     INCIDENT["wrong_attempts"] = 0
     n = burst_n if burst_n is not None else (10 if FAST_MODE else 20)
     return burst(n)
+
+
+def break_bug(name="discount_null", burst_n=None):
+    _req("/reset", "POST")
+    _req(f"/bug/inject?name={name}", "POST")
+    INCIDENT["started"] = time.time()
+    INCIDENT["wrong_attempts"] = 0
+    n = burst_n if burst_n is not None else (10 if FAST_MODE else 20)
+    return burst(n)
+
+
+def restore_bug():
+    _req("/bug/restore", "POST")
 
 
 def reset():

@@ -19,6 +19,11 @@ def load(path=None):
 
 
 def signature(ev):
+    if ev.get("codefix") or ev.get("has_code_bug"):
+        exc = ev.get("code_exception") or ev.get("exception") or "Exception"
+        f = ev.get("code_file") or ev.get("file") or "checkout_logic.py"
+        return f"codefix|{exc}|{os.path.basename(f)}"
+
     err_class = ev.get("error_class")
     if not err_class:
         top_errors = ev.get("top_errors") or []

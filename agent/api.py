@@ -6,10 +6,17 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
-import core, memory, diagnose as dg
+import core, memory, diagnose as dg, codefix
 
 INCIDENTS = []
 watcher_lock = threading.Lock()
+
+CURRENT_CODEFIX = {
+    "proposal": None,
+    "approved": False,
+    "result": None,
+}
+codefix_lock = threading.Lock()
 
 BENCHMARK_STATUS = {
     "running": False,
@@ -52,7 +59,7 @@ def _watcher():
             # If p95>500ms or errors>0 for 3 consecutive polls, open an incident and run diagnose automatically
             if consecutive_degraded >= 3:
                 with watcher_lock:
-                    has_open = any(inc.get("status") == "detected" for inc in INCIDENTS)
+                    has_open = any(inc.get("status") in ["detected", "codefix_proposed"] for inc in INCIDENTS)
                     if not has_open:
                         inc_id = f"inc-{uuid.uuid4().hex[:6]}"
                         now = time.time()
@@ -62,18 +69,35 @@ def _watcher():
                             "status": "detected",
                             "diagnosis": None,
                             "evidence": None,
+                            "type": "infrastructure",
+                            "codefix_proposal": None,
                         }
                         INCIDENTS.append(inc)
                         core.INCIDENT["started"] = now
                         core.INCIDENT["wrong_attempts"] = 0
 
-                        # Run diagnose automatically without applying the fix (wait for human approval)
-                        try:
-                            ev, d = dg.diagnose(use_memory=True)
-                            inc["evidence"] = ev
-                            inc["diagnosis"] = d
-                        except Exception as e:
-                            print(f"[watcher] auto-diagnose failed: {e}")
+                        # Check if evidence contains traceback -> route to codefix pipeline
+                        tb = codefix.parse_traceback()
+                        if tb:
+                            inc["type"] = "codefix"
+                            inc["status"] = "codefix_proposed"
+                            try:
+                                proposal = codefix.propose(incident_id=inc_id)
+                                inc["codefix_proposal"] = proposal
+                                with codefix_lock:
+                                    CURRENT_CODEFIX["proposal"] = proposal
+                                    CURRENT_CODEFIX["approved"] = False
+                                    CURRENT_CODEFIX["result"] = None
+                            except Exception as e:
+                                print(f"[watcher] auto-codefix failed: {e}")
+                        else:
+                            # Run diagnose automatically without applying the fix (wait for human approval)
+                            try:
+                                ev, d = dg.diagnose(use_memory=True)
+                                inc["evidence"] = ev
+                                inc["diagnosis"] = d
+                            except Exception as e:
+                                print(f"[watcher] auto-diagnose failed: {e}")
         except Exception:
             pass
 
@@ -109,7 +133,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 @app.get("/api/state")
 def state():
-    base = {"mode": dg.mode(), "memory_count": len(memory.load())}
+    base = {
+        "mode": dg.mode(),
+        "memory_count": len(memory.load()),
+        "has_codefix": bool(CURRENT_CODEFIX.get("proposal")),
+    }
     try:
         return {"online": True, **base, **core.status()}
     except Exception:
@@ -137,8 +165,12 @@ def reset():
         core.reset()
         with watcher_lock:
             for inc in INCIDENTS:
-                if inc.get("status") == "detected":
+                if inc.get("status") in ["detected", "codefix_proposed"]:
                     inc["status"] = "dismissed"
+        with codefix_lock:
+            CURRENT_CODEFIX["proposal"] = None
+            CURRENT_CODEFIX["approved"] = False
+            CURRENT_CODEFIX["result"] = None
     except Exception as e:
         raise HTTPException(502, f"Demo service unreachable: {e}")
     return {"ok": True}
@@ -227,3 +259,61 @@ def start_benchmark(body: dict = Body(default={})):
 def get_benchmark_status():
     with benchmark_lock:
         return dict(BENCHMARK_STATUS)
+
+
+# Code-fix endpoints
+@app.post("/api/codefix/propose")
+def propose_codefix(body: dict = Body(default={})):
+    incident_id = body.get("incident_id")
+    proposal = codefix.propose(incident_id=incident_id)
+    if "error" in proposal:
+        raise HTTPException(400, proposal["error"])
+    with codefix_lock:
+        CURRENT_CODEFIX["proposal"] = proposal
+        CURRENT_CODEFIX["approved"] = False
+        CURRENT_CODEFIX["result"] = None
+    return proposal
+
+
+@app.post("/api/codefix/approve")
+def approve_codefix(body: dict = Body(default={})):
+    proposal = body.get("proposal") or CURRENT_CODEFIX.get("proposal")
+    if not proposal:
+        raise HTTPException(400, "No active codefix proposal to approve.")
+    try:
+        res = codefix.approve(proposal)
+        with codefix_lock:
+            CURRENT_CODEFIX["approved"] = True
+            CURRENT_CODEFIX["result"] = res
+        with watcher_lock:
+            for inc in INCIDENTS:
+                if inc.get("status") in ["detected", "codefix_proposed"]:
+                    inc["status"] = "resolved" if res.get("recovered") else "failed"
+                    inc["resolved_at"] = time.time()
+                    inc["codefix_result"] = res
+        return res
+    except Exception as e:
+        raise HTTPException(500, f"Code fix application failed: {e}")
+
+
+@app.get("/api/codefix/status")
+def get_codefix_status():
+    with codefix_lock:
+        return dict(CURRENT_CODEFIX)
+
+
+@app.post("/api/bug/inject")
+def inject_bug_endpoint(name: str):
+    try:
+        return core.break_bug(name)
+    except Exception as e:
+        raise HTTPException(502, f"Failed to inject bug: {e}")
+
+
+@app.post("/api/bug/restore")
+def restore_bug_endpoint():
+    try:
+        core.restore_bug()
+        return {"ok": True}
+    except Exception as e:
+        raise HTTPException(502, f"Failed to restore bug: {e}")
