@@ -48,57 +48,80 @@ def mode():
     return "gemini" if os.environ.get("GEMINI_API_KEY") else "offline"
 
 
-def heuristic(ev, past, use_memory):
-    failed = {m["action"] for m in past if not m.get("worked")}
-    worked = [m["action"] for m in past if m.get("worked")]
+def heuristic(ev, past, tried=None):
+    """
+    Offline heuristic.
+    First-principles guess is a fixed, plausible, evidence-based prior that is wrong for some faults.
+    Memory is the ONLY difference: past incidents with the same signature are recalled to prefer
+    an action that WORKED and exclude actions that FAILED.
+    Within ONE incident, tried actions (session context) may also be excluded.
+    No branching on use_memory occurs inside this heuristic.
+    """
+    failed_in_past = {m["action"] for m in past if not m.get("worked")}
+    worked_in_past = [m["action"] for m in past if m.get("worked")]
+    session_tried = set(tried or [])
+    to_exclude = failed_in_past | session_tried
 
     err_class = ev.get("error_class", "")
     symptom = ev.get("symptom_type", "")
     v_changed = ev.get("version_changed", False)
 
-    # Determine candidate action order and root cause based on evidence
+    # Fixed, evidence-based prior orders (identical regardless of memory mode)
     if v_changed or "NullReference" in err_class:
         root_cause = "Bad deployment: NullReference exceptions after v3.8.3 release."
         evidence_used = [f"{ev.get('error_count', 0)} NullReference errors", "version changed to v3.8.3"]
         order = ["rollback_deploy", "restart_service", "rollback_config"]
     elif "payment-gateway" in err_class or "downstream" in err_class:
         root_cause = "Downstream dependency failure: payment-gateway timing out."
-        evidence_used = [f"{ev.get('error_count', 0)} payment-gateway timeout errors", "3s latency delay on downstream calls"]
-        order = ["enable_circuit_breaker", "restart_service"] if use_memory else ["restart_service", "enable_circuit_breaker"]
+        evidence_used = [f"{ev.get('error_count', 0)} payment-gateway timeout errors", "downstream calls failing"]
+        # Plausible first-principles guess: restart service to reset network connections
+        order = ["restart_service", "scale_pool", "enable_circuit_breaker"]
     elif "QueuePool" in err_class or ev.get("last_config_change"):
         root_cause = "Connection pool exhaustion: requests time out waiting for a free DB connection."
-        evidence_used = [f"{ev.get('error_count', 0)} QueuePool timeout errors", "p95 latency jumped after config change"]
-        order = ["rollback_config", "scale_pool", "restart_service"] if use_memory else ["scale_pool", "restart_service", "rollback_config"]
+        evidence_used = [f"{ev.get('error_count', 0)} QueuePool timeout errors", "connection timeout reached"]
+        # Plausible first-principles guess: scale pool size
+        order = ["scale_pool", "restart_service", "rollback_config"]
     elif symptom == "creeping-latency" or "memory" in err_class:
         root_cause = "Memory leak: uncollected objects causing creeping latency and high memory usage."
-        evidence_used = ["memory usage reached 85% of limit warning in logs", "latency steadily creeping up"]
-        order = ["restart_service", "scale_pool", "rollback_config"] if use_memory else ["scale_pool", "rollback_config", "restart_service"]
+        evidence_used = ["memory usage high", "latency creeping up"]
+        # Plausible first-principles guess: scale pool to alleviate latency pressure
+        order = ["scale_pool", "rollback_config", "restart_service"]
     elif "slow query" in err_class:
         root_cause = "Missing database index: sequential table scan causing high latency."
-        evidence_used = ["slow query log detected on orders table", "checkout latency between 0.8s and 1.5s"]
-        order = ["add_index", "restart_service", "scale_pool"] if use_memory else ["restart_service", "scale_pool", "add_index"]
+        evidence_used = ["slow query detected", "latency-only symptom"]
+        # Plausible first-principles guess: restart service to clear locks/caches
+        order = ["restart_service", "scale_pool", "add_index"]
     elif "cache" in err_class:
         root_cause = "Cache disabled: requests directly hitting database causing latency spike."
-        evidence_used = ["cache disabled warning in logs", "elevated p95 latency without errors"]
-        order = ["enable_cache", "scale_pool", "restart_service"] if use_memory else ["scale_pool", "restart_service", "enable_cache"]
+        evidence_used = ["cache disabled warning in logs", "latency elevated without errors"]
+        # Plausible first-principles guess: restart service
+        order = ["restart_service", "scale_pool", "enable_cache"]
     else:
         root_cause = "Service latency degradation under checkout traffic."
         evidence_used = ["p95 latency above threshold"]
-        order = ["scale_pool", "restart_service", "rollback_config"]
+        order = ["restart_service", "scale_pool", "rollback_config"]
 
-    if use_memory and worked:
-        action = worked[-1]
+    # If memory recalled an action that worked and it hasn't failed in this session, prioritize it
+    recalled_action = next((a for a in reversed(worked_in_past) if a not in session_tried), None)
+
+    if recalled_action:
+        action = recalled_action
         why = f"Recalled {len(past)} similar incident(s): '{action}' worked before, so it goes first."
-    elif use_memory and failed:
-        action = next((a for a in order if a not in failed), order[0])
-        why = f"Past incidents show {sorted(failed)} FAILED to recover this service, so the plan skips them and tries '{action}'."
     else:
-        action = order[0]
-        why = "No past incidents, first-principles guess."
+        action = next((a for a in order if a not in to_exclude), order[0])
+        if to_exclude:
+            reasons = []
+            if failed_in_past:
+                reasons.append(f"past failures: {sorted(failed_in_past)}")
+            if session_tried:
+                reasons.append(f"tried this session: {sorted(session_tried)}")
+            why = f"Skipping {', '.join(reasons)}; trying '{action}'."
+        else:
+            why = "No past incidents, first-principles guess."
 
     return {
         "root_cause": root_cause,
-        "confidence": 0.85 if (use_memory and worked) else 0.7,
+        "confidence": 0.85 if recalled_action else 0.7,
         "evidence_used": evidence_used,
         "action": action,
         "proposed_fix": FIX_DESCRIPTIONS.get(action, f"Apply fix: {action}"),
@@ -129,12 +152,12 @@ def _llm(ev, past):
     return None
 
 
-def diagnose(use_memory=True):
+def diagnose(use_memory=True, tried_actions=None, memory_path=None):
     ev = collect()
-    past = recall(ev) if use_memory else []
+    past = recall(ev, path=memory_path) if use_memory else []
     d = _llm(ev, past) if os.environ.get("GEMINI_API_KEY") else None
     if d is None:
-        d = heuristic(ev, past, use_memory)
+        d = heuristic(ev, past, tried=tried_actions)
     d["memories_recalled"] = len(past)
     d["past"] = past[-3:]
     return ev, d

@@ -3,10 +3,15 @@ import json, os, time
 PATH = "memory.json"
 
 
-def load():
-    if os.path.exists(PATH):
+def _get_path(path=None):
+    return path or os.environ.get("MEMORY_PATH", PATH)
+
+
+def load(path=None):
+    p = _get_path(path)
+    if os.path.exists(p):
         try:
-            with open(PATH) as f:
+            with open(p, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception:
             return []
@@ -32,23 +37,28 @@ def signature(ev):
     return f"{err_class}|{symptom}|{v_tag}"
 
 
-def recall(ev):
+def recall(ev, path=None):
     sig = signature(ev)
-    return [m for m in load() if m.get("signature") == sig]
+    return [m for m in load(path=path) if m.get("signature") == sig]
 
 
-def remember(entry):
-    mem = load()
+def remember(entry, path=None):
+    p = _get_path(path)
+    mem = load(path=p)
     entry["ts"] = time.time()
     mem.append(entry)
-    with open(PATH, "w") as f:
+    parent = os.path.dirname(os.path.abspath(p))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
         json.dump(mem, f, indent=2)
 
 
-def clear():
-    if os.path.exists(PATH):
+def clear(path=None):
+    p = _get_path(path)
+    if os.path.exists(p):
         try:
-            os.remove(PATH)
+            os.remove(p)
         except Exception:
             pass
 

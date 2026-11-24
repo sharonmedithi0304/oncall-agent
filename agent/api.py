@@ -1,7 +1,8 @@
-import os, sys, threading, time, urllib.request, uuid
+import os, sys, threading, time, urllib.request, uuid, json
 from contextlib import asynccontextmanager
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, HTTPException, Body, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +10,18 @@ import core, memory, diagnose as dg
 
 INCIDENTS = []
 watcher_lock = threading.Lock()
+
+BENCHMARK_STATUS = {
+    "running": False,
+    "completed": 0,
+    "total": 0,
+    "percent": 0.0,
+    "arm": None,
+    "fault": None,
+    "round": None,
+    "error": None,
+}
+benchmark_lock = threading.Lock()
 
 
 def _ping():
@@ -65,6 +78,23 @@ def _watcher():
             pass
 
 
+def _run_benchmark_task(rounds=3, seed=42):
+    from benchmark.run import run_benchmark
+    def _cb(p):
+        with benchmark_lock:
+            BENCHMARK_STATUS.update(p)
+
+    try:
+        run_benchmark(rounds=rounds, seed=seed, fast=True, progress_callback=_cb)
+        with benchmark_lock:
+            BENCHMARK_STATUS["running"] = False
+            BENCHMARK_STATUS["percent"] = 100.0
+    except Exception as e:
+        with benchmark_lock:
+            BENCHMARK_STATUS["running"] = False
+            BENCHMARK_STATUS["error"] = str(e)
+
+
 @asynccontextmanager
 async def lifespan(app):
     if os.environ.get("LIVE_TRAFFIC", "1") == "1":
@@ -88,7 +118,6 @@ def state():
 
 @app.post("/api/break")
 async def break_it(request: Request, fault: str = "pool_exhaustion"):
-    # Allow fault to be passed via query parameter or JSON body
     try:
         body = await request.json()
         if isinstance(body, dict) and "fault" in body:
@@ -157,3 +186,44 @@ def get_memory():
 def clear_memory():
     memory.clear()
     return {"ok": True}
+
+
+# Benchmark endpoints
+@app.get("/api/benchmark")
+def get_benchmark():
+    res_path = os.path.join(ROOT_DIR, "benchmark", "results.json")
+    if os.path.exists(res_path):
+        try:
+            with open(res_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            raise HTTPException(500, f"Error reading benchmark results: {e}")
+    return {}
+
+
+@app.post("/api/benchmark/run")
+def start_benchmark(body: dict = Body(default={})):
+    rounds = body.get("rounds", 3)
+    seed = body.get("seed", 42)
+    with benchmark_lock:
+        if BENCHMARK_STATUS["running"]:
+            return {"status": "already_running", "benchmark": BENCHMARK_STATUS}
+        BENCHMARK_STATUS.update({
+            "running": True,
+            "completed": 0,
+            "total": rounds * 6 * 2,
+            "percent": 0.0,
+            "arm": None,
+            "fault": None,
+            "round": None,
+            "error": None,
+        })
+    t = threading.Thread(target=_run_benchmark_task, args=(rounds, seed), daemon=True)
+    t.start()
+    return {"status": "started", "rounds": rounds, "seed": seed}
+
+
+@app.get("/api/benchmark/status")
+def get_benchmark_status():
+    with benchmark_lock:
+        return dict(BENCHMARK_STATUS)

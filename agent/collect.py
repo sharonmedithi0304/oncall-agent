@@ -1,5 +1,6 @@
 import json, os
 from collections import Counter
+import core
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_LOG_PATH = os.path.join(BASE_DIR, "app.log")
@@ -42,6 +43,8 @@ def collect(path=None):
     deploy_events = [r for r in rows if r.get("msg") == "deploy complete"]
     version_changed = (current_version != initial_version) or any(r.get("version") == "v3.8.3" for r in deploy_events)
 
+    lat_threshold = 120 if getattr(core, "FAST_MODE", False) else 400
+
     change_markers = [
         "config changed",
         "deploy complete",
@@ -59,7 +62,7 @@ def collect(path=None):
 
     ok = [r for r in rows if r.get("msg") == "checkout ok" and "latency_ms" in r]
     if not cut:
-        high_lat = [r for r in ok if r.get("latency_ms", 0) > 400]
+        high_lat = [r for r in ok if r.get("latency_ms", 0) > lat_threshold]
         if high_lat:
             cut = high_lat[0]["ts"]
 
@@ -81,7 +84,7 @@ def collect(path=None):
     else:
         memory_trend = "normal"
 
-    if p95_after >= 400:
+    if p95_after >= lat_threshold:
         latency_trend = "creeping" if memory_trend in ["critical", "rising"] else "high"
     else:
         latency_trend = "normal"
@@ -90,7 +93,7 @@ def collect(path=None):
         symptom_type = "errors"
     elif memory_trend in ["critical", "rising"] or latency_trend == "creeping":
         symptom_type = "creeping-latency"
-    elif p95_after >= 400:
+    elif p95_after >= lat_threshold:
         symptom_type = "latency-only"
     else:
         symptom_type = "normal"
@@ -108,7 +111,7 @@ def collect(path=None):
 
     incident_detected = bool(
         len(errs) > 0
-        or p95_after >= 400
+        or p95_after >= lat_threshold
         or version_changed
         or memory_trend == "critical"
         or (cut and len(recent_warnings) > 0)

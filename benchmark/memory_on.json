@@ -1,0 +1,534 @@
+[
+  {
+    "signature": "memory 85% of limit|creeping-latency|version_same",
+    "root_cause": "Memory leak: uncollected objects causing creeping latency and high memory usage.",
+    "action": "scale_pool",
+    "worked": false,
+    "before": {
+      "p95_ms": 326,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 355
+    },
+    "seconds_to_resolve": 0.94,
+    "wrong_attempts": 1,
+    "memory_on": true,
+    "ts": 1795487488.3500452
+  },
+  {
+    "signature": "memory 85% of limit|creeping-latency|version_same",
+    "root_cause": "Memory leak: uncollected objects causing creeping latency and high memory usage.",
+    "action": "rollback_config",
+    "worked": false,
+    "before": {
+      "p95_ms": 346,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 371
+    },
+    "seconds_to_resolve": 1.55,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487488.9570975
+  },
+  {
+    "signature": "memory 85% of limit|creeping-latency|version_same",
+    "root_cause": "Memory leak: uncollected objects causing creeping latency and high memory usage.",
+    "action": "restart_service",
+    "worked": true,
+    "before": {
+      "p95_ms": 363,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 109
+    },
+    "seconds_to_resolve": 1.89,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487489.2989156
+  },
+  {
+    "signature": "slow query|latency-only|version_same",
+    "root_cause": "Missing database index: sequential table scan causing high latency.",
+    "action": "restart_service",
+    "worked": false,
+    "before": {
+      "p95_ms": 324,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 323
+    },
+    "seconds_to_resolve": 0.87,
+    "wrong_attempts": 1,
+    "memory_on": true,
+    "ts": 1795487490.2201855
+  },
+  {
+    "signature": "slow query|latency-only|version_same",
+    "root_cause": "Missing database index: sequential table scan causing high latency.",
+    "action": "scale_pool",
+    "worked": false,
+    "before": {
+      "p95_ms": 315,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 342
+    },
+    "seconds_to_resolve": 1.45,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487490.7994783
+  },
+  {
+    "signature": "slow query|latency-only|version_same",
+    "root_cause": "Missing database index: sequential table scan causing high latency.",
+    "action": "add_index",
+    "worked": true,
+    "before": {
+      "p95_ms": 332,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 99
+    },
+    "seconds_to_resolve": 1.77,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487491.1256573
+  },
+  {
+    "signature": "NullReference in apply_discount|errors|version_changed",
+    "root_cause": "Bad deployment: NullReference exceptions after v3.8.3 release.",
+    "action": "rollback_deploy",
+    "worked": true,
+    "before": {
+      "p95_ms": 34,
+      "errors": 6
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 63
+    },
+    "seconds_to_resolve": 0.33,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487491.515793
+  },
+  {
+    "signature": "payment-gateway timeout|errors|version_same",
+    "root_cause": "Downstream dependency failure: payment-gateway timing out.",
+    "action": "restart_service",
+    "worked": false,
+    "before": {
+      "p95_ms": 0,
+      "errors": 11
+    },
+    "after": {
+      "requests": 8,
+      "errors": 8,
+      "p95_ms": null
+    },
+    "seconds_to_resolve": 0.33,
+    "wrong_attempts": 1,
+    "memory_on": true,
+    "ts": 1795487491.90061
+  },
+  {
+    "signature": "payment-gateway timeout|errors|version_same",
+    "root_cause": "Downstream dependency failure: payment-gateway timing out.",
+    "action": "scale_pool",
+    "worked": false,
+    "before": {
+      "p95_ms": 0,
+      "errors": 8
+    },
+    "after": {
+      "requests": 8,
+      "errors": 8,
+      "p95_ms": null
+    },
+    "seconds_to_resolve": 0.63,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487492.194819
+  },
+  {
+    "signature": "payment-gateway timeout|errors|version_same",
+    "root_cause": "Downstream dependency failure: payment-gateway timing out.",
+    "action": "enable_circuit_breaker",
+    "worked": true,
+    "before": {
+      "p95_ms": 0,
+      "errors": 8
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 102
+    },
+    "seconds_to_resolve": 0.95,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487492.5190873
+  },
+  {
+    "signature": "QueuePool limit reached, connection timed out|errors|version_same",
+    "root_cause": "Connection pool exhaustion: requests time out waiting for a free DB connection.",
+    "action": "scale_pool",
+    "worked": false,
+    "before": {
+      "p95_ms": 303,
+      "errors": 5
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 388
+    },
+    "seconds_to_resolve": 0.93,
+    "wrong_attempts": 1,
+    "memory_on": true,
+    "ts": 1795487493.505309
+  },
+  {
+    "signature": "QueuePool limit reached, connection timed out|errors|version_same",
+    "root_cause": "Connection pool exhaustion: requests time out waiting for a free DB connection.",
+    "action": "restart_service",
+    "worked": false,
+    "before": {
+      "p95_ms": 379,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 318
+    },
+    "seconds_to_resolve": 1.63,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487494.2069452
+  },
+  {
+    "signature": "QueuePool limit reached, connection timed out|errors|version_same",
+    "root_cause": "Connection pool exhaustion: requests time out waiting for a free DB connection.",
+    "action": "rollback_config",
+    "worked": true,
+    "before": {
+      "p95_ms": 305,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 72
+    },
+    "seconds_to_resolve": 2.0,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487494.578275
+  },
+  {
+    "signature": "cache disabled|latency-only|version_same",
+    "root_cause": "Cache disabled: requests directly hitting database causing latency spike.",
+    "action": "restart_service",
+    "worked": false,
+    "before": {
+      "p95_ms": 318,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 331
+    },
+    "seconds_to_resolve": 0.88,
+    "wrong_attempts": 1,
+    "memory_on": true,
+    "ts": 1795487495.5126982
+  },
+  {
+    "signature": "cache disabled|latency-only|version_same",
+    "root_cause": "Cache disabled: requests directly hitting database causing latency spike.",
+    "action": "scale_pool",
+    "worked": false,
+    "before": {
+      "p95_ms": 319,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 337
+    },
+    "seconds_to_resolve": 1.48,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487496.1158633
+  },
+  {
+    "signature": "cache disabled|latency-only|version_same",
+    "root_cause": "Cache disabled: requests directly hitting database causing latency spike.",
+    "action": "enable_cache",
+    "worked": true,
+    "before": {
+      "p95_ms": 325,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 100
+    },
+    "seconds_to_resolve": 1.81,
+    "wrong_attempts": 2,
+    "memory_on": true,
+    "ts": 1795487496.4449508
+  },
+  {
+    "signature": "memory 85% of limit|creeping-latency|version_same",
+    "root_cause": "Memory leak: uncollected objects causing creeping latency and high memory usage.",
+    "action": "restart_service",
+    "worked": true,
+    "before": {
+      "p95_ms": 325,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 100
+    },
+    "seconds_to_resolve": 0.8,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487497.2977128
+  },
+  {
+    "signature": "QueuePool limit reached, connection timed out|errors|version_same",
+    "root_cause": "Connection pool exhaustion: requests time out waiting for a free DB connection.",
+    "action": "rollback_config",
+    "worked": true,
+    "before": {
+      "p95_ms": 292,
+      "errors": 5
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 107
+    },
+    "seconds_to_resolve": 0.76,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487498.121516
+  },
+  {
+    "signature": "NullReference in apply_discount|errors|version_changed",
+    "root_cause": "Bad deployment: NullReference exceptions after v3.8.3 release.",
+    "action": "rollback_deploy",
+    "worked": true,
+    "before": {
+      "p95_ms": 23,
+      "errors": 6
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 89
+    },
+    "seconds_to_resolve": 0.47,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487498.6712384
+  },
+  {
+    "signature": "payment-gateway timeout|errors|version_same",
+    "root_cause": "Downstream dependency failure: payment-gateway timing out.",
+    "action": "enable_circuit_breaker",
+    "worked": true,
+    "before": {
+      "p95_ms": 0,
+      "errors": 11
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 73
+    },
+    "seconds_to_resolve": 0.41,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487499.1361449
+  },
+  {
+    "signature": "cache disabled|latency-only|version_same",
+    "root_cause": "Cache disabled: requests directly hitting database causing latency spike.",
+    "action": "enable_cache",
+    "worked": true,
+    "before": {
+      "p95_ms": 310,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 89
+    },
+    "seconds_to_resolve": 0.67,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487499.8646574
+  },
+  {
+    "signature": "slow query|latency-only|version_same",
+    "root_cause": "Missing database index: sequential table scan causing high latency.",
+    "action": "add_index",
+    "worked": true,
+    "before": {
+      "p95_ms": 322,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 86
+    },
+    "seconds_to_resolve": 0.68,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487500.6047168
+  },
+  {
+    "signature": "memory 85% of limit|creeping-latency|version_same",
+    "root_cause": "Memory leak: uncollected objects causing creeping latency and high memory usage.",
+    "action": "restart_service",
+    "worked": true,
+    "before": {
+      "p95_ms": 334,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 73
+    },
+    "seconds_to_resolve": 0.66,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487501.3447003
+  },
+  {
+    "signature": "slow query|latency-only|version_same",
+    "root_cause": "Missing database index: sequential table scan causing high latency.",
+    "action": "add_index",
+    "worked": true,
+    "before": {
+      "p95_ms": 326,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 63
+    },
+    "seconds_to_resolve": 0.67,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487502.0690143
+  },
+  {
+    "signature": "NullReference in apply_discount|errors|version_changed",
+    "root_cause": "Bad deployment: NullReference exceptions after v3.8.3 release.",
+    "action": "rollback_deploy",
+    "worked": true,
+    "before": {
+      "p95_ms": 48,
+      "errors": 5
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 64
+    },
+    "seconds_to_resolve": 0.39,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487502.5171223
+  },
+  {
+    "signature": "QueuePool limit reached, connection timed out|errors|version_same",
+    "root_cause": "Connection pool exhaustion: requests time out waiting for a free DB connection.",
+    "action": "rollback_config",
+    "worked": true,
+    "before": {
+      "p95_ms": 307,
+      "errors": 5
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 65
+    },
+    "seconds_to_resolve": 0.62,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487503.192663
+  },
+  {
+    "signature": "payment-gateway timeout|errors|version_same",
+    "root_cause": "Downstream dependency failure: payment-gateway timing out.",
+    "action": "enable_circuit_breaker",
+    "worked": true,
+    "before": {
+      "p95_ms": 0,
+      "errors": 10
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 65
+    },
+    "seconds_to_resolve": 0.44,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487503.6930811
+  },
+  {
+    "signature": "cache disabled|latency-only|version_same",
+    "root_cause": "Cache disabled: requests directly hitting database causing latency spike.",
+    "action": "enable_cache",
+    "worked": true,
+    "before": {
+      "p95_ms": 321,
+      "errors": 0
+    },
+    "after": {
+      "requests": 8,
+      "errors": 0,
+      "p95_ms": 90
+    },
+    "seconds_to_resolve": 0.7,
+    "wrong_attempts": 0,
+    "memory_on": true,
+    "ts": 1795487504.4564388
+  }
+]

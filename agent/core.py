@@ -1,8 +1,18 @@
-import json, time, threading, urllib.request
+import json, time, threading, urllib.request, os
 from memory import remember, signature
 
 BASE = "http://127.0.0.1:8000"
 INCIDENT = {"started": None, "wrong_attempts": 0}
+FAST_MODE = False
+
+
+def set_fast_mode(enabled: bool):
+    global FAST_MODE
+    FAST_MODE = enabled
+    try:
+        _req(f"/fast_mode?enabled={'true' if enabled else 'false'}", "POST")
+    except Exception:
+        pass
 
 
 def _req(path, method="GET", timeout=25):
@@ -37,14 +47,15 @@ def burst(n=20):
     return {"requests": n, "errors": sum(1 for ok, _ in results if not ok), "p95_ms": p95}
 
 
-def break_service(fault="pool_exhaustion"):
+def break_service(fault="pool_exhaustion", burst_n=None):
     _req("/reset", "POST")  # start every incident from a clean, reproducible state
     if fault == "pool":
         fault = "pool_exhaustion"
     _req(f"/fault/{fault}?on=true", "POST")
     INCIDENT["started"] = time.time()
     INCIDENT["wrong_attempts"] = 0
-    return burst(20)
+    n = burst_n if burst_n is not None else (10 if FAST_MODE else 20)
+    return burst(n)
 
 
 def reset():
@@ -53,12 +64,14 @@ def reset():
     INCIDENT["wrong_attempts"] = 0
 
 
-def apply_fix(action, diagnosis, evidence, use_memory):
+def apply_fix(action, diagnosis, evidence, use_memory, memory_path=None, burst_n=None):
     before = status()
     _req(f"/fix/{action}", "POST")
-    after = burst(10)
-    recovered = after["errors"] == 0 and after["p95_ms"] is not None and after["p95_ms"] < 500
-    secs = round(time.time() - INCIDENT["started"], 1) if INCIDENT["started"] else None
+    n = burst_n if burst_n is not None else (8 if FAST_MODE else 10)
+    after = burst(n)
+    threshold = 200 if FAST_MODE else 500
+    recovered = after["errors"] == 0 and after["p95_ms"] is not None and after["p95_ms"] < threshold
+    secs = round(time.time() - INCIDENT["started"], 2) if INCIDENT["started"] else None
 
     if not recovered:
         INCIDENT["wrong_attempts"] += 1
@@ -66,7 +79,7 @@ def apply_fix(action, diagnosis, evidence, use_memory):
 
     result = {
         "action": action,
-        "before": {"p95_ms": before["p95_ms"], "errors": before["errors"]},
+        "before": {"p95_ms": before.get("p95_ms", 0), "errors": before.get("errors", 0)},
         "after": after,
         "recovered": recovered,
         "seconds_to_resolve": secs,
@@ -83,5 +96,5 @@ def apply_fix(action, diagnosis, evidence, use_memory):
         "seconds_to_resolve": secs,
         "wrong_attempts": wrong_attempts,
         "memory_on": use_memory,
-    })
+    }, path=memory_path)
     return result

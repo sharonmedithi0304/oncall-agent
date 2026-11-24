@@ -1,13 +1,14 @@
-import { LayoutDashboard, BrainCircuit, Siren, Wifi, WifiOff, Sparkles } from 'lucide-react'
+import { LayoutDashboard, BrainCircuit, BarChart3, Siren, Wifi, WifiOff, Sparkles } from 'lucide-react'
 
 const items = [
   { id: 'overview', label: 'Incident Command', icon: LayoutDashboard },
   { id: 'memory', label: 'Agent Memory', icon: BrainCircuit },
+  { id: 'benchmark', label: 'Benchmark', icon: BarChart3 },
 ]
 
 export default function Sidebar({ tab, setTab, online, mode }) {
   return (
-    <aside className="glass-card w-64 shrink-0 rounded-3xl p-5 flex flex-col">
+    <aside className="glass-card w-64 shrink-0 rounded-3xl p-5 flex flex-col h-full">
       <div className="flex items-center gap-3 px-2 mb-8">
         <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-400 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/30">
           <Siren size={20} />

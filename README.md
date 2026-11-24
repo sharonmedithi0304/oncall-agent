@@ -13,6 +13,22 @@ Breaks a real service, finds the root cause from logs, asks for approval, applie
 | `downstream_timeout` | 504 errors (`payment-gateway timeout`), 3s delay | `enable_circuit_breaker` | `restart_service` | Downstream payment provider hangs |
 | `cache_disabled` | High p95 latency (0.6-0.8s), 0 errors | `enable_cache` | `scale_pool` | Cache layer disabled, all requests hit DB |
 
+## How We Measure (Memory vs No-Memory Benchmark)
+
+The benchmark runner (`python -m benchmark.run --rounds 3 --seed 42`) executes an honest, controlled comparison between two arms: **Memory OFF** and **Memory ON**.
+
+- **Fixed Seed & Same Sequence**: All 6 faults are evaluated across N rounds in identical pseudorandom order for both arms using a deterministic seed (`--seed 42`).
+- **Identical Reasoning (Zero Rigging)**: The offline diagnostic heuristic applies identical evidence-based priors for both arms. Neither arm has code branching on `use_memory` inside the reasoning logic.
+- **Memory is the Only Difference**: The Memory ON arm recalls past incidents matching the error/symptom signature from an isolated memory store (`memory_on.json`), prioritizing actions that worked and pruning actions that failed. The Memory OFF arm starts fresh every time (`memory_off.json` is never read).
+- **Session Context**: Within a single incident attempt loop, both arms may exclude actions already attempted in that immediate incident session (session context != cross-incident memory).
+- **Caveats**: In synthetic local benchmarks, network conditions and database concurrency are simulated in-process; production environments would introduce variable latency noise and multi-service dependencies.
+
+Run benchmark via CLI:
+```bash
+python -m benchmark.run --rounds 3 --seed 42
+```
+Or open the **Benchmark** tab directly in the dashboard UI.
+
 ## Run (Windows)
 1. Install Node.js (LTS) from nodejs.org if you don't have it.
 2. (Optional, real LLM) in cmd: `set GEMINI_API_KEY=your_key`
@@ -23,17 +39,12 @@ Without a key the agent uses an offline heuristic fallback so the demo still run
 
 ## Run Tests
 ```bash
-pytest tests/test_faults.py -v
+pytest tests/ -v
 ```
-
-## Demo flow
-1. Select a fault from the dropdown (e.g. Pool Exhaustion, Memory Leak, or Slow Query) and click **Break service**.
-2. Alternatively, let traffic run—the background watcher auto-detects sustained degradation (3 consecutive polls) and opens an incident with diagnosis ready.
-3. Diagnose with **Memory OFF**, approve: it tries a plausible first-principles fix (e.g. `scale_pool` or `restart_service`), which fails to recover. Saved to memory.
-4. Diagnose with **Memory ON**: it recalls the failed attempt, avoids it, and applies the matching fix (e.g. `rollback_config`, `add_index`, `enable_cache`), proving recovery with live p95 and error metrics.
 
 ## Layout
 - `demo_app/`   checkout service with 6 realistic faults and fix endpoints (port 8000)
 - `agent/`      collect (logs to evidence), diagnose (LLM + offline fallback), memory, core (apply + verify), api (port 8001) with auto-detection watcher
-- `dashboard/`  React + Tailwind + Framer Motion + Lucide UI with fault dropdown & incident alert (port 5173)
-- `tests/`      Pytest test suite verifying recovery and signatures for all 6 faults
+- `benchmark/`  benchmark runner (`run.py`), metrics calculator, and results exporter (`results.json`, `results.csv`)
+- `dashboard/`  React + Tailwind + Framer Motion + Lucide UI with fault dropdown, incident alert, and Benchmark view (port 5173)
+- `tests/`      Pytest test suite verifying faults, API, memory comparison, and schema

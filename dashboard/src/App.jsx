@@ -8,6 +8,7 @@ import Sparkline from './components/Sparkline'
 import Pipeline from './components/Pipeline'
 import DiagnosisCard from './components/DiagnosisCard'
 import MemoryView from './components/MemoryView'
+import BenchmarkView from './components/BenchmarkView'
 
 const FAULT_OPTIONS = [
   { id: 'pool_exhaustion', label: 'Pool Exhaustion' },
@@ -123,7 +124,7 @@ export default function App() {
   ]
 
   return (
-    <div className="relative h-full overflow-hidden">
+    <div className="relative h-screen w-full overflow-hidden">
       <div className="pointer-events-none absolute -top-40 -left-32 h-[28rem] w-[28rem] rounded-full bg-cyan-500/20 blur-[120px]" />
       <div className="pointer-events-none absolute top-1/3 -right-40 h-[32rem] w-[32rem] rounded-full bg-blue-600/20 blur-[140px]" />
       <div className="pointer-events-none absolute -bottom-40 left-1/3 h-[26rem] w-[26rem] rounded-full bg-teal-500/15 blur-[120px]" />
@@ -131,9 +132,11 @@ export default function App() {
       <div className="relative flex h-full gap-5 p-5">
         <Sidebar tab={tab} setTab={setTab} online={st.online} mode={st.mode} />
 
-        <main className="flex-1 overflow-y-auto pr-1">
+        <main className="flex-1 h-full overflow-y-auto pr-1 pb-10">
           {tab === 'memory' ? (
             <MemoryView items={mem} onClear={clearMemory} />
+          ) : tab === 'benchmark' ? (
+            <BenchmarkView />
           ) : (
             <div className="space-y-6 pb-10">
               <div className="flex items-end justify-between flex-wrap gap-4">

@@ -1,0 +1,577 @@
+{
+  "timestamp": 1795487504.488445,
+  "rounds": 3,
+  "seed": 42,
+  "summary": {
+    "memory_off": {
+      "first_try_success_rate": 0.167,
+      "avg_wrong_attempts": 1.67,
+      "avg_seconds_to_recovery": 1.54,
+      "total_incidents": 18
+    },
+    "memory_on": {
+      "first_try_success_rate": 0.722,
+      "avg_wrong_attempts": 0.56,
+      "avg_seconds_to_recovery": 0.91,
+      "total_incidents": 18
+    },
+    "headline": "Memory cut wrong attempts by 66% and time-to-fix by 41%"
+  },
+  "per_round": [
+    {
+      "round": 1,
+      "memory_off": {
+        "first_try_success_rate": 0.167,
+        "avg_wrong_attempts": 1.67,
+        "avg_seconds": 1.63,
+        "incidents": 6
+      },
+      "memory_on": {
+        "first_try_success_rate": 0.167,
+        "avg_wrong_attempts": 1.67,
+        "avg_seconds": 1.48,
+        "incidents": 6
+      }
+    },
+    {
+      "round": 2,
+      "memory_off": {
+        "first_try_success_rate": 0.167,
+        "avg_wrong_attempts": 1.67,
+        "avg_seconds": 1.49,
+        "incidents": 6
+      },
+      "memory_on": {
+        "first_try_success_rate": 1.0,
+        "avg_wrong_attempts": 0.0,
+        "avg_seconds": 0.65,
+        "incidents": 6
+      }
+    },
+    {
+      "round": 3,
+      "memory_off": {
+        "first_try_success_rate": 0.167,
+        "avg_wrong_attempts": 1.67,
+        "avg_seconds": 1.5,
+        "incidents": 6
+      },
+      "memory_on": {
+        "first_try_success_rate": 1.0,
+        "avg_wrong_attempts": 0.0,
+        "avg_seconds": 0.59,
+        "incidents": 6
+      }
+    }
+  ],
+  "incidents": [
+    {
+      "arm": "memory_off",
+      "round": 1,
+      "fault": "memory_leak",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 2.03,
+      "tried_actions": [
+        "scale_pool",
+        "rollback_config",
+        "restart_service"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 1,
+      "fault": "slow_query",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 2.0,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "add_index"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 1,
+      "fault": "bad_deploy",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.49,
+      "tried_actions": [
+        "rollback_deploy"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 1,
+      "fault": "downstream_timeout",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.13,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_circuit_breaker"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 1,
+      "fault": "pool_exhaustion",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.9,
+      "tried_actions": [
+        "scale_pool",
+        "restart_service",
+        "rollback_config"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 1,
+      "fault": "cache_disabled",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 2.21,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_cache"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 2,
+      "fault": "memory_leak",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.86,
+      "tried_actions": [
+        "scale_pool",
+        "rollback_config",
+        "restart_service"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 2,
+      "fault": "pool_exhaustion",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.92,
+      "tried_actions": [
+        "scale_pool",
+        "restart_service",
+        "rollback_config"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 2,
+      "fault": "bad_deploy",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.33,
+      "tried_actions": [
+        "rollback_deploy"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 2,
+      "fault": "downstream_timeout",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 0.97,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_circuit_breaker"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 2,
+      "fault": "cache_disabled",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 2.0,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_cache"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 2,
+      "fault": "slow_query",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.84,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "add_index"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 3,
+      "fault": "memory_leak",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.91,
+      "tried_actions": [
+        "scale_pool",
+        "rollback_config",
+        "restart_service"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 3,
+      "fault": "slow_query",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.88,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "add_index"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 3,
+      "fault": "bad_deploy",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.44,
+      "tried_actions": [
+        "rollback_deploy"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 3,
+      "fault": "pool_exhaustion",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.92,
+      "tried_actions": [
+        "scale_pool",
+        "restart_service",
+        "rollback_config"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 3,
+      "fault": "downstream_timeout",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 0.99,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_circuit_breaker"
+      ]
+    },
+    {
+      "arm": "memory_off",
+      "round": 3,
+      "fault": "cache_disabled",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.86,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_cache"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 1,
+      "fault": "memory_leak",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.94,
+      "tried_actions": [
+        "scale_pool",
+        "rollback_config",
+        "restart_service"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 1,
+      "fault": "slow_query",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.78,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "add_index"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 1,
+      "fault": "bad_deploy",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.35,
+      "tried_actions": [
+        "rollback_deploy"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 1,
+      "fault": "downstream_timeout",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 0.96,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_circuit_breaker"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 1,
+      "fault": "pool_exhaustion",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 2.02,
+      "tried_actions": [
+        "scale_pool",
+        "restart_service",
+        "rollback_config"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 1,
+      "fault": "cache_disabled",
+      "recovered": true,
+      "attempts": 3,
+      "first_try_success": false,
+      "wrong_attempts": 2,
+      "seconds_to_resolve": 1.82,
+      "tried_actions": [
+        "restart_service",
+        "scale_pool",
+        "enable_cache"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 2,
+      "fault": "memory_leak",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.81,
+      "tried_actions": [
+        "restart_service"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 2,
+      "fault": "pool_exhaustion",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.78,
+      "tried_actions": [
+        "rollback_config"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 2,
+      "fault": "bad_deploy",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.49,
+      "tried_actions": [
+        "rollback_deploy"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 2,
+      "fault": "downstream_timeout",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.42,
+      "tried_actions": [
+        "enable_circuit_breaker"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 2,
+      "fault": "cache_disabled",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.68,
+      "tried_actions": [
+        "enable_cache"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 2,
+      "fault": "slow_query",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.71,
+      "tried_actions": [
+        "add_index"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 3,
+      "fault": "memory_leak",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.67,
+      "tried_actions": [
+        "restart_service"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 3,
+      "fault": "slow_query",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.68,
+      "tried_actions": [
+        "add_index"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 3,
+      "fault": "bad_deploy",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.4,
+      "tried_actions": [
+        "rollback_deploy"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 3,
+      "fault": "pool_exhaustion",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.63,
+      "tried_actions": [
+        "rollback_config"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 3,
+      "fault": "downstream_timeout",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.45,
+      "tried_actions": [
+        "enable_circuit_breaker"
+      ]
+    },
+    {
+      "arm": "memory_on",
+      "round": 3,
+      "fault": "cache_disabled",
+      "recovered": true,
+      "attempts": 1,
+      "first_try_success": true,
+      "wrong_attempts": 0,
+      "seconds_to_resolve": 0.73,
+      "tried_actions": [
+        "enable_cache"
+      ]
+    }
+  ]
+}

@@ -18,4 +18,7 @@ export const api = {
   incidents: () => call('/api/incidents'),
   memory: () => call('/api/memory'),
   clearMemory: () => call('/api/memory', 'DELETE'),
+  benchmark: () => call('/api/benchmark'),
+  runBenchmark: (rounds = 3, seed = 42) => call('/api/benchmark/run', 'POST', { rounds, seed }),
+  benchmarkStatus: () => call('/api/benchmark/status'),
 }

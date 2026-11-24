@@ -10,13 +10,14 @@ LOG_PATH = os.path.join(BASE_DIR, "app.log")
 BASE_VERSION = "v3.8.2"
 VERSION = BASE_VERSION
 WINDOW_S = 30
+FAST_MODE = False
 app = FastAPI(title="Checkout service (demo)")
 
 
 def make_engine(size):
     return create_engine(
         "sqlite:///shop.db", poolclass=QueuePool,
-        pool_size=size, max_overflow=0, pool_timeout=1,
+        pool_size=size, max_overflow=0, pool_timeout=0.1 if FAST_MODE else 1,
         connect_args={"check_same_thread": False},
     )
 
@@ -38,7 +39,6 @@ LEAK_BUFFER = []
 LAT, ERR = [], []
 lock = threading.Lock()
 
-# Configure dedicated file handler to guarantee log output even under pytest/uvicorn
 app_logger = logging.getLogger("checkout_demo")
 app_logger.setLevel(logging.INFO)
 app_logger.propagate = False
@@ -61,6 +61,14 @@ def get_memory_mb():
     return round(120.0 + len(LEAK_BUFFER) * 1.0, 1)
 
 
+@app.post("/fast_mode")
+def set_fast_mode(enabled: bool = True):
+    global FAST_MODE
+    FAST_MODE = enabled
+    S["engine"] = make_engine(S["pool_size"])
+    return {"fast_mode": FAST_MODE}
+
+
 @app.post("/checkout")
 def checkout(item: str = "book", qty: int = 1):
     global VERSION
@@ -73,23 +81,23 @@ def checkout(item: str = "book", qty: int = 1):
         log("ERROR", "NullReference in apply_discount", version=VERSION, item=item)
         raise HTTPException(500, "Internal Server Error: NullReference in apply_discount")
 
-    # Fault 5: downstream_timeout - payment provider call sleeps 3s then raises
+    # Fault 5: downstream_timeout - payment provider call sleeps then raises
     if FAULTS["downstream_timeout"]:
-        time.sleep(3)
+        time.sleep(0.05 if FAST_MODE else 3)
         with lock:
             ERR.append(time.time())
         log("ERROR", "payment-gateway timeout", downstream="payment-gateway", timeout_s=3)
         raise HTTPException(504, "payment-gateway timeout")
 
-    # Fault 2: slow_query - sleep 0.8-1.5s, no errors
+    # Fault 2: slow_query - sleep 0.8-1.5s (or 0.25s in fast mode), no errors
     if FAULTS["slow_query"]:
-        delay = random.uniform(0.8, 1.5)
+        delay = 0.25 if FAST_MODE else random.uniform(0.8, 1.5)
         time.sleep(delay)
         log("WARN", "slow query on orders: sequential scan without index", query="SELECT * FROM orders WHERE item = :i", duration_s=round(delay, 3))
 
     # Fault 6: cache_disabled - cache flag is off so every request hits DB (latency up, no errors)
     if FAULTS["cache_disabled"]:
-        delay = random.uniform(0.6, 0.8)
+        delay = 0.25 if FAST_MODE else random.uniform(0.6, 0.8)
         time.sleep(delay)
         log("WARN", "cache disabled: cache miss query fallback to db", cache_enabled=False, duration_s=round(delay, 3))
 
@@ -99,14 +107,14 @@ def checkout(item: str = "book", qty: int = 1):
         mem_mb = get_memory_mb()
         if mem_mb >= 850.0:  # 85% of 1000MB limit
             log("WARN", "memory 85% of limit", memory_mb=mem_mb, limit_mb=1000)
-            creep_delay = min(0.6 + (mem_mb - 850.0) * 0.005, 1.8)
+            creep_delay = 0.25 if FAST_MODE else min(0.6 + (mem_mb - 850.0) * 0.005, 1.8)
             time.sleep(creep_delay)
 
-    # Fault 1: pool_exhaustion (existing: connections held too long)
+    # Fault 1: pool_exhaustion (connections held too long)
     try:
         with S["engine"].connect() as conn:
             if FAULTS["pool_exhaustion"]:
-                time.sleep(2)  # simulates connections held too long
+                time.sleep(0.25 if FAST_MODE else 2)
             conn.execute(text("INSERT INTO orders (item, qty) VALUES (:i,:q)"), {"i": item, "q": qty})
             conn.commit()
     except PoolTimeout:
