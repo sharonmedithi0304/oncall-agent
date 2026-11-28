@@ -16,6 +16,8 @@ import {
   Filter,
   Radio,
   Layers,
+  GitPullRequest,
+  ExternalLink,
 } from 'lucide-react'
 import { api } from './api'
 import Sidebar from './components/Sidebar'
@@ -373,6 +375,17 @@ export default function App() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
+                    {detectedIncident.pr_url && (
+                      <a
+                        href={detectedIncident.pr_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="px-3 py-2 rounded-xl border border-indigo-400/30 bg-indigo-500/20 text-indigo-300 font-semibold text-xs hover:bg-indigo-500/30 transition flex items-center gap-1.5"
+                        title="View Pull Request on GitHub"
+                      >
+                        <GitPullRequest size={13} /> View PR <ExternalLink size={12} />
+                      </a>
+                    )}
                     <button
                       onClick={() => openDetectedIncident(detectedIncident)}
                       className="px-4 py-2 rounded-xl bg-white text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md"

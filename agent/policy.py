@@ -71,7 +71,7 @@ def is_service_healthy(
     """
     Judge recovery by absolute health:
     errors == 0 AND p95 < 500ms (configurable in policies.yaml as slo_p95_ms),
-    or p95 improved vs before.
+    or p95 improved vs before when within acceptable latency.
     """
     if slo_p95_ms is None:
         slo_p95_ms = get_slo_p95_ms()
@@ -79,14 +79,8 @@ def is_service_healthy(
     p95 = after.get("p95_ms")
     if errors != 0 or p95 is None:
         return False
-    # Absolute health: 0 errors and p95 under SLO threshold
-    if p95 < slo_p95_ms:
-        return True
-    # Or p95 improved vs before (meaningful improvement when previously exceeding SLO)
-    p95_before = before.get("p95_ms") if before else None
-    if p95_before and p95_before > slo_p95_ms and p95 <= (p95_before * 0.8):
-        return True
-    return False
+    # Absolute health: 0 errors and p95 within SLO threshold
+    return p95 < slo_p95_ms
 
 
 def evaluate_policy(

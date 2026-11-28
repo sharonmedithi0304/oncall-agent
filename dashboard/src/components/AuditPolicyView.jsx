@@ -15,6 +15,10 @@ import {
   ChevronDown,
   ChevronRight,
   Filter,
+  GitPullRequest,
+  ExternalLink,
+  Send,
+  Bot,
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -39,6 +43,7 @@ export default function AuditPolicyView() {
   const [auditLog, setAuditLog] = useState([])
   const [verifyStatus, setVerifyStatus] = useState(null)
   const [policies, setPolicies] = useState({})
+  const [integrations, setIntegrations] = useState({})
   const [verifying, setVerifying] = useState(false)
   const [selectedIncident, setSelectedIncident] = useState('all')
   const [filterText, setFilterText] = useState('')
@@ -46,12 +51,14 @@ export default function AuditPolicyView() {
 
   const loadData = async () => {
     try {
-      const [entries, pol] = await Promise.all([
+      const [entries, pol, integ] = await Promise.all([
         api.audit().catch(() => []),
         api.policies().catch(() => ({})),
+        api.integrations().catch(() => ({})),
       ])
       setAuditLog(Array.isArray(entries) ? entries : [])
       setPolicies(pol || {})
+      setIntegrations(integ || {})
     } catch (e) {
       console.error('Audit view fetch error', e)
     }
@@ -142,6 +149,91 @@ export default function AuditPolicyView() {
             <RefreshCw size={14} className={verifying ? 'animate-spin' : ''} />
             Re-verify
           </button>
+        </div>
+      </div>
+
+      {/* Settings / Integrations Panel */}
+      <div className="glass-card rounded-2xl p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Bot className="text-cyan-400" size={20} />
+            <h2 className="text-lg font-bold text-white">External Integrations & Webhooks</h2>
+          </div>
+          <span className="text-xs text-white/40">Status & Graceful Degradation</span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* GitHub */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <GitPullRequest size={18} className="text-indigo-400" /> GitHub
+              </div>
+              <span
+                className={`text-xs px-2.5 py-0.5 rounded-full font-semibold border ${
+                  integrations.github?.configured
+                    ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300'
+                    : 'bg-white/5 border-white/10 text-white/40'
+                }`}
+              >
+                {integrations.github?.configured ? 'Configured' : 'Not configured'}
+              </span>
+            </div>
+            <p className="text-xs text-white/60">
+              {integrations.github?.feature || 'Pull Request creation & automated branch pushing'}
+            </p>
+            <div className="text-[11px] font-mono text-white/40 pt-1 border-t border-white/5">
+              Env: GITHUB_TOKEN
+            </div>
+          </div>
+
+          {/* Telegram */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <Send size={18} className="text-cyan-400" /> Telegram
+              </div>
+              <span
+                className={`text-xs px-2.5 py-0.5 rounded-full font-semibold border ${
+                  integrations.telegram?.configured
+                    ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300'
+                    : 'bg-white/5 border-white/10 text-white/40'
+                }`}
+              >
+                {integrations.telegram?.configured ? 'Configured' : 'Not configured'}
+              </span>
+            </div>
+            <p className="text-xs text-white/60">
+              {integrations.telegram?.feature || '2-way interactive approval via Telegram Bot'}
+            </p>
+            <div className="text-[11px] font-mono text-white/40 pt-1 border-t border-white/5">
+              Env: TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+            </div>
+          </div>
+
+          {/* n8n */}
+          <div className="rounded-xl border border-white/10 bg-white/5 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 font-semibold text-white">
+                <ShieldCheck size={18} className="text-amber-400" /> n8n Hooks
+              </div>
+              <span
+                className={`text-xs px-2.5 py-0.5 rounded-full font-semibold border ${
+                  integrations.n8n?.configured
+                    ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300'
+                    : 'bg-white/5 border-white/10 text-white/40'
+                }`}
+              >
+                {integrations.n8n?.configured ? 'Configured' : 'Not configured'}
+              </span>
+            </div>
+            <p className="text-xs text-white/60">
+              {integrations.n8n?.feature || 'HMAC signed webhook hooks for workflow automation'}
+            </p>
+            <div className="text-[11px] font-mono text-white/40 pt-1 border-t border-white/5">
+              Env: N8N_WEBHOOK_URL, N8N_WEBHOOK_SECRET
+            </div>
+          </div>
         </div>
       </div>
 
@@ -326,6 +418,16 @@ export default function AuditPolicyView() {
                         <span>
                           <span className="text-white/40">Reason:</span> {entry.details.reason}
                         </span>
+                      )}
+                      {entry.details.pr_url && (
+                        <a
+                          href={entry.details.pr_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-indigo-300 hover:text-indigo-200 underline font-semibold ml-1"
+                        >
+                          <GitPullRequest size={12} /> View PR <ExternalLink size={10} />
+                        </a>
                       )}
                     </div>
                   )}

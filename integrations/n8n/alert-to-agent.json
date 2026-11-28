@@ -1,0 +1,140 @@
+{
+  "name": "OnCall AI: Alert Ingestion & Human Approval Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "alert-trigger",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "id": "node-webhook-trigger"
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "http://localhost:8000/api/ingest/generic",
+        "options": {},
+        "headerParametersUi": {
+          "parameter": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Webhook-Secret",
+              "value": "={{ $env.WEBHOOK_SECRET || 'dev-secret' }}"
+            }
+          ]
+        },
+        "jsonParameters": true,
+        "bodyParametersJson": "={{ JSON.stringify($json.body || $json) }}"
+      },
+      "name": "Ingest to OnCall Agent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [460, 300],
+      "id": "node-http-ingest"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.policy?.decision || $json.incident?.policy_decision?.decision }}",
+              "value2": "NEEDS_APPROVAL"
+            }
+          ]
+        }
+      },
+      "name": "IF Decision == NEEDS_APPROVAL",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "id": "node-if-needs-approval"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=🚨 *OnCall AI: Incident Approval Required*\n\nIncident ID: `{{ $json.incident.id }}`\nService: `{{ $json.incident.service }}`\nSeverity: {{ $json.incident.severity }}\nTitle: {{ $json.incident.title }}\nDecision: *{{ $json.policy.decision }}*\nAction: `{{ $json.incident.diagnosis?.action || 'codefix' }}`\nConfidence: {{ Math.round(($json.policy.confidence || 0.8) * 100) }}%\n\nApproval or rejection can be performed in the Dashboard or via the OnCall Telegram bot.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [920, 200],
+      "id": "node-telegram-send"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [920, 400],
+      "id": "node-respond-webhook"
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Ingest to OnCall Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ingest to OnCall Agent": {
+      "main": [
+        [
+          {
+            "node": "IF Decision == NEEDS_APPROVAL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Decision == NEEDS_APPROVAL": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

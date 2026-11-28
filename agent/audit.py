@@ -47,6 +47,12 @@ def _get_last_hash(log_path: str) -> str:
         return GENESIS_HASH
 
 
+def get_head_hash(log_path: Optional[str] = None) -> str:
+    """Return the cryptographic head hash of the audit chain."""
+    path = log_path or get_default_audit_log()
+    return _get_last_hash(path)
+
+
 def record_audit_event(
     event: str,
     incident_id: Optional[str] = None,
@@ -79,6 +85,22 @@ def record_audit_event(
 
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(entry) + "\n")
+
+    # Dispatch to n8n webhook if configured (incident opened, approval needed, approved, applied, verified, rolled back)
+    try:
+        from agent import n8n
+        n8n_event = None
+        if event in ("ingested", "detected"):
+            n8n_event = "incident_opened"
+        elif event == "approval_needed" or (event == "policy_decision" and (details or {}).get("decision") == "NEEDS_APPROVAL"):
+            n8n_event = "approval_needed"
+        elif event in ("approved", "applied", "verified", "rolled_back"):
+            n8n_event = event
+
+        if n8n_event and incident_id:
+            n8n.send_n8n_event(n8n_event, incident_id, {"actor": actor, "details": details or {}})
+    except Exception:
+        pass
 
     return entry
 

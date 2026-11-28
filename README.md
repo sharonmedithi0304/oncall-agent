@@ -92,6 +92,30 @@ flowchart TD
 - **Automated & Manual Rollbacks (`agent/api.py`)**: Takes pre-remediation state and file snapshots before every action. Automatically rolls back if post-fix verification fails (errors remain or p95 degrades past threshold), and exposes a manual rollback button on the dashboard (`POST /api/rollback`).
 - **Testing & Tooling (`tools/send_alert.py` & `samples/`)**: CLI helper to dispatch realistic sample payloads (`datadog.json`, `sentry.json`, `prometheus.json`, `cloudwatch.json`, `generic.json`) into the live pipeline.
 
+## Integrations Setup
+
+The agent supports real production integrations that degrade gracefully with clear "Not configured" status chips when credentials are not provided:
+
+### 1. GitHub Pull Requests
+- **Environment Variable**: `GITHUB_TOKEN`
+- **Behavior**: When an automated code fix is approved, pushes fix branch `fix/<incident-id>` to the git remote (never pushes to `main`) and creates a Pull Request via GitHub REST API.
+- **PR Metadata**: Automatically attaches labels `auto-fix` and the incident severity (`critical`, `warning`), records PR URL in audit trail, and generates an exhaustive 10-section PR markdown body (root cause, unified diff, pytest sandbox results, production verification metrics, audit hash, and rollback commands).
+- **Graceful Fallback**: Without a token, commits to the local branch and returns compare URL + full generated PR markdown body.
+
+### 2. Telegram Interactive Approval Bot
+- **Environment Variables**: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+- **Behavior**: Uses Telegram Bot API with a background long-polling thread (`getUpdates`) — requires zero public URLs or reverse tunnels.
+- **Allowlist Security**: Strictly enforces chat allowlist matching `TELEGRAM_CHAT_ID`; silently ignores all messages from unauthorized chats.
+- **Human-in-the-Loop Workflow**: When an incident reaches `NEEDS_APPROVAL`, sends an alert message with service name, source badge, root cause, action, policy reasons, confidence, and inline buttons `[Approve]` `[Reject]` `[Details]`.
+- **Live Updates**: Pressing a button triggers remediation, logs the event in the audit chain as `human:telegram:<username>`, edits the Telegram message to display verified before/after production metrics, and provides a `[Rollback]` button.
+
+### 3. n8n Workflow Hooks
+- **Environment Variables**: `N8N_WEBHOOK_URL`, `N8N_WEBHOOK_SECRET` (optional, defaults to `WEBHOOK_SECRET`)
+- **Behavior**: Dispatches JSON events on incident lifecycle transitions (`incident_opened`, `approval_needed`, `approved`, `applied`, `verified`, `rolled_back`).
+- **Cryptographic Signing**: Every webhook request includes HMAC-SHA256 headers (`X-N8N-Signature: sha256=<hmac>` and `X-Signature-SHA256: <hmac>`).
+- **Importable Workflow**: `integrations/n8n/alert-to-agent.json` connects incoming alerts to `/api/ingest/generic` and conditionally alerts Telegram when human approval is required. See `integrations/n8n/README.md`.
+
+
 
 ## How We Measure (Memory vs No-Memory Benchmark)
 

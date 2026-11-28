@@ -32,4 +32,5 @@ export const api = {
   services: () => call('/api/services'),
   rollback: (incidentId) => call('/api/rollback', 'POST', { incident_id: incidentId }),
   resetDemoData: () => call('/api/admin/reset-demo-data', 'POST'),
+  integrations: () => call('/api/integrations'),
 }

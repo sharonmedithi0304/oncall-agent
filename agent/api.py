@@ -7,7 +7,7 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 from fastapi import FastAPI, HTTPException, Body, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-import core, memory, diagnose as dg, codefix, ingest, policy, audit
+import core, memory, diagnose as dg, codefix, ingest, policy, audit, telegram_bot, n8n
 
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "dev-secret")
 if "WEBHOOK_SECRET" not in os.environ:
@@ -181,6 +181,8 @@ def _watcher():
                                 inc["policy_decision"] = pol
                                 audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:codefix", details={"summary": proposal.get("summary")})
                                 audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+                                if pol.get("decision") == "NEEDS_APPROVAL":
+                                    telegram_bot.notify_needs_approval(inc)
                                 with codefix_lock:
                                     CURRENT_CODEFIX["proposal"] = proposal
                                     CURRENT_CODEFIX["approved"] = False
@@ -203,6 +205,8 @@ def _watcher():
                                 inc["policy_decision"] = pol
                                 audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:diagnose", details={"action": d.get("action"), "root_cause": d.get("root_cause")})
                                 audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+                                if pol.get("decision") == "NEEDS_APPROVAL":
+                                    telegram_bot.notify_needs_approval(inc)
                             except Exception as e:
                                 print(f"[watcher] auto-diagnose failed: {e}")
 
@@ -252,7 +256,9 @@ def ensure_traffic_started():
 async def lifespan(app):
     ensure_traffic_started()
     ensure_watcher_started()
+    telegram_bot.start_bot_polling()
     yield
+    telegram_bot.stop_bot_polling()
 
 
 app = FastAPI(title="On-call agent API", lifespan=lifespan)
@@ -261,6 +267,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 # Also ensure background workers run even if lifespan is not triggered by host server
 ensure_traffic_started()
 ensure_watcher_started()
+telegram_bot.start_bot_polling()
 
 
 # ==============================================================================
@@ -332,6 +339,8 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
             inc_data["policy_decision"] = pol
             audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:codefix", details={"summary": proposal.get("summary")})
             audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+            if pol.get("decision") == "NEEDS_APPROVAL":
+                telegram_bot.notify_needs_approval(inc_data)
             with codefix_lock:
                 CURRENT_CODEFIX["proposal"] = proposal
                 CURRENT_CODEFIX["approved"] = False
@@ -363,6 +372,9 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
                 details={"action": d.get("action"), "root_cause": d.get("root_cause"), "confidence": d.get("confidence")},
             )
             audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+
+            if pol.get("decision") == "NEEDS_APPROVAL":
+                telegram_bot.notify_needs_approval(inc_data)
 
             # Auto-apply if policy allows
             if pol.get("decision") == "AUTO_APPLY":
@@ -547,8 +559,142 @@ def diagnose(use_memory: bool = True, source: Optional[str] = None):
     if inc_id:
         audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:diagnose", details={"action": d.get("action"), "root_cause": d.get("root_cause")})
         audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+        if pol.get("decision") == "NEEDS_APPROVAL":
+            with watcher_lock:
+                for i in INCIDENTS:
+                    if i.get("id") == inc_id:
+                        telegram_bot.notify_needs_approval(i)
+                        break
 
     return {"evidence": ev, "diagnosis": d, "use_memory": use_memory, "policy": pol}
+
+
+def get_incident_by_id(inc_id: str) -> Optional[dict]:
+    with watcher_lock:
+        for inc in INCIDENTS:
+            if inc.get("id") == inc_id:
+                return inc
+    return None
+
+
+def dismiss_incident(inc_id: str, actor: str = "human:operator", reason: str = "") -> dict:
+    with watcher_lock:
+        for inc in INCIDENTS:
+            if inc.get("id") == inc_id:
+                inc["status"] = "dismissed"
+                inc["dismissed_by"] = actor
+                inc["dismissed_reason"] = reason
+    audit.record_audit_event("rejected", incident_id=inc_id, actor=actor, details={"reason": reason or "Dismissed"})
+    return {"status": "dismissed", "incident_id": inc_id}
+
+
+def apply_infra_fix(
+    action: str,
+    diag: dict,
+    ev: dict,
+    use_mem: bool = True,
+    actor: str = "human:operator",
+    inc_id: Optional[str] = None,
+) -> dict:
+    if not inc_id:
+        with watcher_lock:
+            open_incs = [i for i in INCIDENTS if i.get("status") == "detected"]
+            if open_incs:
+                inc_id = open_incs[-1].get("id")
+    if not inc_id:
+        inc_id = f"inc-{uuid.uuid4().hex[:6]}"
+
+    audit.record_audit_event("approved", incident_id=inc_id, actor=actor, details={"action": action})
+    take_snapshot(inc_id, "infrastructure")
+
+    audit.record_audit_event("applied", incident_id=inc_id, actor=actor, details={"action": action})
+    res = core.apply_fix(action, diag, ev, use_mem)
+
+    recovered = res.get("recovered", False)
+    before_m = res.get("before", {})
+    after_m = res.get("after", {})
+
+    audit.record_audit_event(
+        "verified",
+        incident_id=inc_id,
+        actor="system:verification",
+        details={"recovered": recovered, "before": before_m, "after": after_m},
+    )
+
+    p95_before = before_m.get("p95_ms") or 0
+    p95_after = after_m.get("p95_ms") or 0
+    errors_after = after_m.get("errors", 0)
+
+    slo_val = 200 if getattr(core, "FAST_MODE", False) else policy.get_slo_p95_ms()
+    healthy = policy.is_service_healthy(after_m, before_m, slo_p95_ms=slo_val)
+    if not healthy:
+        execute_rollback(
+            inc_id,
+            actor="system:auto_rollback",
+            reason=f"Verification failed: {errors_after} errors, p95 {p95_after}ms",
+        )
+        res["recovered"] = False
+        res["auto_rolled_back"] = True
+    elif recovered:
+        with watcher_lock:
+            for inc in INCIDENTS:
+                if inc.get("id") == inc_id or inc.get("status") == "detected":
+                    inc["status"] = "resolved"
+                    inc["resolved_at"] = time.time()
+                    inc["fix_result"] = res
+
+    return res
+
+
+def apply_code_fix(proposal: dict, actor: str = "human:operator") -> dict:
+    inc_id = proposal.get("incident_id") or "inc-active"
+    audit.record_audit_event("approved", incident_id=inc_id, actor=actor, details={"type": "codefix"})
+    take_snapshot(inc_id, "codefix")
+
+    try:
+        audit.record_audit_event("applied", incident_id=inc_id, actor=actor, details={"type": "codefix"})
+        res = codefix.approve(proposal)
+
+        recovered = bool(res.get("recovered"))
+        pr_url = res.get("pr_url") or (res.get("git", {}).get("pr_url"))
+        audit.record_audit_event("verified", incident_id=inc_id, actor="system:verification", details=res)
+
+        if not recovered:
+            execute_rollback(inc_id, actor="system:auto_rollback", reason="Codefix verification failed")
+            res["auto_rolled_back"] = True
+
+        with codefix_lock:
+            CURRENT_CODEFIX["approved"] = True
+            CURRENT_CODEFIX["result"] = res
+            if pr_url:
+                CURRENT_CODEFIX["pr_url"] = pr_url
+        with watcher_lock:
+            for inc in INCIDENTS:
+                if inc.get("id") == inc_id or inc.get("status") in ["detected", "codefix_proposed"]:
+                    inc["status"] = "resolved" if recovered else "failed"
+                    inc["resolved_at"] = time.time()
+                    inc["codefix_result"] = res
+                    if pr_url:
+                        inc["pr_url"] = pr_url
+        return res
+    except Exception as e:
+        execute_rollback(inc_id, actor="system:auto_rollback", reason=f"Exception during codefix: {e}")
+        raise e
+
+
+def execute_approve_by_id(inc_id: str, actor: str = "human:operator") -> dict:
+    inc = get_incident_by_id(inc_id)
+    if inc and (inc.get("type") == "codefix" or inc.get("codefix_proposal")):
+        prop = inc.get("codefix_proposal") or CURRENT_CODEFIX.get("proposal")
+        if prop:
+            return apply_code_fix(prop, actor=actor)
+    elif CURRENT_CODEFIX.get("proposal") and CURRENT_CODEFIX["proposal"].get("incident_id") == inc_id:
+        return apply_code_fix(CURRENT_CODEFIX["proposal"], actor=actor)
+
+    diag = (inc.get("diagnosis") if inc else {}) or {}
+    ev = (inc.get("evidence") if inc else {}) or {}
+    action = diag.get("action", "scale_pool")
+    return apply_infra_fix(action, diag, ev, use_mem=True, actor=actor, inc_id=inc_id)
 
 
 @app.post("/api/fix")
@@ -557,59 +703,11 @@ def fix(body: dict = Body(...)):
     diag = body.get("diagnosis", {})
     ev = body.get("evidence", {})
     use_mem = body.get("use_memory", True)
-
-    inc_id = None
-    with watcher_lock:
-        open_incs = [i for i in INCIDENTS if i.get("status") == "detected"]
-        if open_incs:
-            inc_id = open_incs[-1].get("id")
-
-    if not inc_id:
-        inc_id = f"inc-{uuid.uuid4().hex[:6]}"
-
-    # Audit approved & take snapshot
-    audit.record_audit_event("approved", incident_id=inc_id, actor="human:operator", details={"action": action})
-    take_snapshot(inc_id, "infrastructure")
+    actor = body.get("actor", "human:operator")
+    inc_id = body.get("incident_id")
 
     try:
-        audit.record_audit_event("applied", incident_id=inc_id, actor="human:operator", details={"action": action})
-        res = core.apply_fix(action, diag, ev, use_mem)
-
-        recovered = res.get("recovered", False)
-        before_m = res.get("before", {})
-        after_m = res.get("after", {})
-
-        audit.record_audit_event(
-            "verified",
-            incident_id=inc_id,
-            actor="system:verification",
-            details={"recovered": recovered, "before": before_m, "after": after_m},
-        )
-
-        p95_before = before_m.get("p95_ms") or 0
-        p95_after = after_m.get("p95_ms") or 0
-        errors_after = after_m.get("errors", 0)
-
-        # Auto-rollback only if unhealthy by absolute health definition
-        slo_val = 200 if getattr(core, "FAST_MODE", False) else policy.get_slo_p95_ms()
-        healthy = policy.is_service_healthy(after_m, before_m, slo_p95_ms=slo_val)
-        if not healthy:
-            execute_rollback(
-                inc_id,
-                actor="system:auto_rollback",
-                reason=f"Verification failed: {errors_after} errors, p95 {p95_after}ms",
-            )
-            res["recovered"] = False
-            res["auto_rolled_back"] = True
-        elif recovered:
-            with watcher_lock:
-                for inc in INCIDENTS:
-                    if inc.get("status") == "detected":
-                        inc["status"] = "resolved"
-                        inc["resolved_at"] = time.time()
-                        inc["fix_result"] = res
-
-        return res
+        return apply_infra_fix(action, diag, ev, use_mem=use_mem, actor=actor, inc_id=inc_id)
     except Exception as e:
         raise HTTPException(502, f"Fix failed: {e}")
 
@@ -738,6 +836,17 @@ def propose_codefix(body: dict = Body(default={})):
     )
     proposal["policy_decision"] = pol
 
+    if pol.get("decision") == "NEEDS_APPROVAL":
+        telegram_bot.notify_needs_approval({
+            "id": proposal.get("incident_id") or "inc-codefix",
+            "service": "checkout",
+            "source": "auto_detected",
+            "title": proposal.get("summary") or "Automated Code Fix Proposed",
+            "type": "codefix",
+            "codefix_proposal": proposal,
+            "policy_decision": pol,
+        })
+
     return proposal
 
 
@@ -747,34 +856,37 @@ def approve_codefix(body: dict = Body(default={})):
     if not proposal:
         raise HTTPException(400, "No active codefix proposal to approve.")
 
-    inc_id = proposal.get("incident_id") or "inc-active"
-    audit.record_audit_event("approved", incident_id=inc_id, actor="human:operator", details={"type": "codefix"})
-    take_snapshot(inc_id, "codefix")
-
+    actor = body.get("actor", "human:operator")
     try:
-        audit.record_audit_event("applied", incident_id=inc_id, actor="human:operator", details={"type": "codefix"})
-        res = codefix.approve(proposal)
-
-        recovered = bool(res.get("recovered"))
-        audit.record_audit_event("verified", incident_id=inc_id, actor="system:verification", details=res)
-
-        if not recovered:
-            execute_rollback(inc_id, actor="system:auto_rollback", reason="Codefix verification failed")
-            res["auto_rolled_back"] = True
-
-        with codefix_lock:
-            CURRENT_CODEFIX["approved"] = True
-            CURRENT_CODEFIX["result"] = res
-        with watcher_lock:
-            for inc in INCIDENTS:
-                if inc.get("status") in ["detected", "codefix_proposed"]:
-                    inc["status"] = "resolved" if recovered else "failed"
-                    inc["resolved_at"] = time.time()
-                    inc["codefix_result"] = res
-        return res
+        return apply_code_fix(proposal, actor=actor)
     except Exception as e:
-        execute_rollback(inc_id, actor="system:auto_rollback", reason=f"Exception during codefix: {e}")
         raise HTTPException(500, f"Code fix application failed: {e}")
+
+
+@app.get("/api/integrations")
+def get_integrations():
+    """Return status chips for GitHub, Telegram, and n8n without exposing secrets."""
+    gh_token = os.environ.get("GITHUB_TOKEN")
+    tg_configured = telegram_bot.is_configured()
+    n8n_configured = n8n.is_configured()
+
+    return {
+        "github": {
+            "configured": bool(gh_token),
+            "status": "Configured (token active)" if gh_token else "Not configured",
+            "feature": "Pull Request creation & branch pushing",
+        },
+        "telegram": {
+            "configured": tg_configured,
+            "status": "Configured (polling active)" if tg_configured else "Not configured",
+            "feature": "Interactive 2-way approval via Telegram bot",
+        },
+        "n8n": {
+            "configured": n8n_configured,
+            "status": "Configured (HMAC signed webhook)" if n8n_configured else "Not configured",
+            "feature": "Outbound webhook dispatch for workflow automation",
+        },
+    }
 
 
 @app.get("/api/codefix/status")

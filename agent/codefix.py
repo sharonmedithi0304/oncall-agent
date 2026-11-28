@@ -4,8 +4,9 @@ ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT_DIR)
 
-import core, memory
+import core, memory, audit
 from collect import load
+from pr_body import generate_pr_body
 
 DEMO_APP_DIR = os.path.join(ROOT_DIR, "demo_app")
 PRISTINE_PATH = os.path.join(DEMO_APP_DIR, "pristine", "checkout_logic.py")
@@ -323,60 +324,108 @@ def apply_patch_to_file(diff_text: str, target_rel_path: str = "demo_app/checkou
         print(f"[codefix] hot reload notification: {e}")
 
 
-def handle_git_pr(incident_id, diff_text, exc_type, file_path, test_results, metrics):
+def _run_git_cmd(args: list) -> subprocess.CompletedProcess:
+    """Helper to run git commands with error capture."""
+    return subprocess.run(["git"] + args, cwd=ROOT_DIR, capture_output=True, text=True)
+
+
+def get_git_remote_url() -> str:
+    """Return origin push URL if git remote configured, else empty string."""
+    try:
+        remotes = _run_git_cmd(["remote", "-v"])
+        for line in remotes.stdout.splitlines():
+            if "origin" in line and "(push)" in line:
+                return line.split()[1]
+    except Exception:
+        pass
+    return ""
+
+
+def handle_git_pr(
+    incident_id=None,
+    diff_text="",
+    exc_type="Exception",
+    file_path="checkout_logic.py",
+    test_results=None,
+    metrics=None,
+    tb_info=None,
+    proposal=None,
+    severity="critical",
+    policy_decision=None,
+    branch=None,
+    commit_msg=None,
+    pr_title=None,
+    **kwargs,
+):
     """
     Creates branch fix/<incident-id>, commits patch locally.
     If GITHUB_TOKEN & remote exist, pushes and opens GitHub PR via REST API.
     Otherwise returns local compare URL, PR title, and body.
     Never pushes to main.
     """
-    branch_name = f"fix/{incident_id}"
-    commit_msg = f"fix({incident_id}): resolve {exc_type} in {file_path}"
-    pr_title = f"Fix {exc_type} in {file_path} ({incident_id})"
-    pr_body = f"""## Incident {incident_id} Resolution
+    if proposal:
+        incident_id = incident_id or proposal.get("incident_id")
+        diff_text = diff_text or proposal.get("diff", "")
+        test_results = test_results or proposal.get("sandbox_test")
+        metrics = metrics or proposal.get("verification_metrics")
+        tb_info = tb_info or proposal.get("traceback_info")
+        severity = severity or proposal.get("severity", "critical")
+        if not exc_type or exc_type == "Exception":
+            exc_type = (tb_info or {}).get("exception", "Exception")
+        if not file_path or file_path == "checkout_logic.py":
+            file_path = (tb_info or {}).get("file", "demo_app/checkout_logic.py")
 
-### Root Cause
-An unhandled `{exc_type}` occurred in `{file_path}` under checkout traffic.
+    incident_id = incident_id or "inc-active"
+    branch_name = branch or f"fix/{incident_id}"
+    commit_msg = commit_msg or f"fix({incident_id}): resolve {exc_type} in {file_path}"
+    pr_title = pr_title or f"Fix {exc_type} in {file_path} ({incident_id})"
 
-### Unified Diff
-```diff
-{diff_text}
-```
+    summary = f"Automated fix applied for incident `{incident_id}` resolving `{exc_type}` in `{file_path}`."
+    root_cause = f"Unhandled `{exc_type}` occurred in `{file_path}` under checkout traffic."
+    stack_trace_loc = tb_info or {"file": file_path, "exception": exc_type}
+    chain_hash = audit.get_head_hash()
+    pol = policy_decision or (proposal.get("policy_decision") if proposal else None) or {
+        "decision": "NEEDS_APPROVAL",
+        "risk_tier": "high",
+        "reasons": ["Automated code patch requires human approval before merge."],
+    }
 
-### Sandbox Test Results
-- **Before Patch**: {'PASSED' if test_results.get('before', {}).get('passed') else 'FAILED'}
-- **After Patch**: {'PASSED' if test_results.get('after', {}).get('passed') else 'FAILED'}
-
-### Verification Metrics
-- Requests: {metrics.get('requests')}
-- Errors: {metrics.get('errors')}
-- p95 Latency: {metrics.get('p95_ms')}ms
-"""
+    pr_body = generate_pr_body(
+        incident_id=incident_id,
+        summary=summary,
+        root_cause=root_cause,
+        stack_trace_loc=stack_trace_loc,
+        diff_text=diff_text,
+        sandbox_results=test_results,
+        verification_metrics=metrics,
+        policy_decision=pol,
+        incident_report_id=incident_id,
+        audit_chain_hash=chain_hash,
+    )
 
     git_info = {
         "branch": branch_name,
         "committed": False,
         "pushed": False,
+        "opened": False,
         "pr_url": None,
         "pr_title": pr_title,
         "pr_body": pr_body,
+        "body": pr_body,
         "compare_url": None,
+        "labels": ["auto-fix", severity],
+        "reason": "GITHUB_TOKEN not configured" if not os.environ.get("GITHUB_TOKEN") else None,
     }
 
     try:
         # Check current git status
-        subprocess.run(["git", "checkout", "-B", branch_name], cwd=ROOT_DIR, check=True, capture_output=True)
-        subprocess.run(["git", "add", file_path], cwd=ROOT_DIR, check=True, capture_output=True)
-        subprocess.run(["git", "commit", "-m", commit_msg], cwd=ROOT_DIR, check=True, capture_output=True)
+        _run_git_cmd(["checkout", "-B", branch_name])
+        _run_git_cmd(["add", file_path])
+        _run_git_cmd(["commit", "-m", commit_msg])
         git_info["committed"] = True
 
         # Check for remote
-        remotes = subprocess.run(["git", "remote", "-v"], cwd=ROOT_DIR, capture_output=True, text=True)
-        origin_url = ""
-        for line in remotes.stdout.splitlines():
-            if "origin" in line and "(push)" in line:
-                origin_url = line.split()[1]
-                break
+        origin_url = get_git_remote_url()
 
         # Generate compare URL if repo url exists
         if origin_url and "github.com" in origin_url:
@@ -385,8 +434,8 @@ An unhandled `{exc_type}` occurred in `{file_path}` under checkout traffic.
 
             github_token = os.environ.get("GITHUB_TOKEN")
             if github_token:
-                # Push branch
-                subprocess.run(["git", "push", "-u", "origin", branch_name], cwd=ROOT_DIR, check=True, capture_output=True)
+                # Push branch (never push to main)
+                _run_git_cmd(["push", "-u", "origin", branch_name])
                 git_info["pushed"] = True
 
                 # Open GitHub PR via REST API
@@ -405,7 +454,34 @@ An unhandled `{exc_type}` occurred in `{file_path}` under checkout traffic.
                 req = urllib.request.Request(api_url, data=payload, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=15) as resp:
                     pr_data = json.loads(resp.read().decode("utf-8"))
-                    git_info["pr_url"] = pr_data.get("html_url")
+                    pr_url = pr_data.get("html_url")
+                    git_info["pr_url"] = pr_url
+                    git_info["opened"] = True
+                    git_info["reason"] = None
+                    pull_number = pr_data.get("number")
+
+                # Add labels: "auto-fix" and the incident severity
+                if pull_number:
+                    labels_url = f"https://api.github.com/repos/{clean_repo}/issues/{pull_number}/labels"
+                    labels_payload = json.dumps({"labels": ["auto-fix", severity]}).encode("utf-8")
+                    req_labels = urllib.request.Request(labels_url, data=labels_payload, headers=headers, method="POST")
+                    try:
+                        with urllib.request.urlopen(req_labels, timeout=10):
+                            pass
+                    except Exception as ex:
+                        print(f"[codefix] Warning adding labels to PR: {ex}")
+
+                # Store PR URL in audit log
+                audit.record_audit_event(
+                    "pr_opened",
+                    incident_id=incident_id,
+                    actor="system:github",
+                    details={
+                        "pr_url": pr_url,
+                        "branch": branch_name,
+                        "labels": ["auto-fix", severity],
+                    },
+                )
     except Exception as e:
         git_info["error"] = str(e)
 
@@ -535,7 +611,7 @@ def propose(incident_id=None, memory_path=None):
     }
 
 
-def approve(proposal, memory_path=None):
+def approve(proposal, memory_path=None, severity="critical"):
     """
     Applies proposal diff to workspace, verifies with burst, commits to git branch,
     writes incident report, and saves outcome into memory.
@@ -568,6 +644,10 @@ def approve(proposal, memory_path=None):
         file_path,
         proposal.get("sandbox_test", {}),
         after_burst,
+        tb_info=tb_info,
+        proposal=proposal,
+        severity=severity,
+        policy_decision=proposal.get("policy_decision"),
     )
 
     # 4. Write incident report
@@ -600,6 +680,7 @@ def approve(proposal, memory_path=None):
         "recovered": recovered,
         "metrics": after_burst,
         "git": git_info,
+        "pr_url": git_info.get("pr_url"),
         "report_file": os.path.relpath(report_file, ROOT_DIR).replace("\\", "/"),
         "status": "resolved" if recovered else "verification_failed",
     }
