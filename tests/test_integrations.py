@@ -258,10 +258,8 @@ def test_telegram_approve_callback_triggers_approval_and_audit(monkeypatch):
     assert "oncall_alice" in edit_text
     assert "RECOVERED" in edit_text
 
-    # Rollback button must be present in edited reply markup
-    markup = edit_calls[0]["data"].get("reply_markup", {})
-    buttons = markup.get("inline_keyboard", [[]])[0]
-    assert any("Rollback" in b.get("text", "") for b in buttons)
+    # Buttons must be removed after approval
+    assert edit_calls[0]["data"].get("reply_markup") is None
 
 
 def test_n8n_event_is_signed(monkeypatch):

@@ -15,6 +15,9 @@ if "WEBHOOK_SECRET" not in os.environ:
 
 INCIDENTS = []
 watcher_lock = threading.Lock()
+approval_lock = threading.Lock()
+INCIDENT_COOLDOWNS = {}  # key -> timestamp
+COOLDOWN_SECONDS = 60.0
 
 SNAPSHOTS = {}
 snapshot_lock = threading.Lock()
@@ -61,9 +64,14 @@ def take_snapshot(incident_id: str, fix_type: str = "infrastructure"):
                 "timestamp": time.time(),
             }
         else:
+            state = {}
+            try:
+                state = core.status() if hasattr(core, "status") else {}
+            except Exception:
+                pass
             SNAPSHOTS[incident_id] = {
                 "type": "infrastructure",
-                "state": core.status() if hasattr(core, "status") else {},
+                "state": state,
                 "timestamp": time.time(),
             }
 
@@ -97,10 +105,18 @@ def execute_rollback(incident_id: str, actor: str = "system:auto_rollback", reas
     )
 
     with watcher_lock:
+        now = time.time()
         for inc in INCIDENTS:
             if inc.get("id") == incident_id:
+                inc["state"] = "ROLLED_BACK"
                 inc["status"] = "rolled_back"
                 inc["rollback_reason"] = reason
+                inc["resolved_at"] = now
+                svc = inc.get("service", "checkout")
+                sig = inc.get("signature")
+                if sig:
+                    INCIDENT_COOLDOWNS[f"{svc}:{sig}"] = now
+                INCIDENT_COOLDOWNS[svc] = now
 
     return {"status": "rolled_back", "incident_id": incident_id, "type": rolled_back_type, "reason": reason}
 
@@ -133,84 +149,124 @@ def _watcher():
             # If p95>500ms or errors>0 for 3 consecutive polls, open an incident and run diagnose automatically
             if consecutive_degraded >= 3:
                 with watcher_lock:
-                    has_open = any(inc.get("status") in ["detected", "codefix_proposed"] for inc in INCIDENTS)
-                    if not has_open:
-                        inc_id = f"inc-{uuid.uuid4().hex[:6]}"
-                        now = time.time()
-                        inc = {
-                            "id": inc_id,
-                            "service": "checkout",
-                            "source": "auto_detected",
-                            "severity": "critical",
-                            "title": "Automated SLO Degradation Alert",
-                            "description": f"Consecutive degradation observed: p95={m.get('p95_ms', 0)}ms, errors={m.get('errors', 0)}",
-                            "tags": ["service:checkout", "source:watcher"],
-                            "started_at": now,
-                            "status": "detected",
-                            "diagnosis": None,
-                            "evidence": None,
-                            "type": "infrastructure",
-                            "codefix_proposal": None,
-                            "policy_decision": None,
-                        }
-                        core.INCIDENT["started"] = now
-                        core.INCIDENT["wrong_attempts"] = 0
+                    service = "checkout"
+                    now = time.time()
 
-                        # Log detected event
-                        audit.record_audit_event(
-                            "detected",
-                            incident_id=inc_id,
-                            actor="system:watcher",
-                            details={"p95_ms": m.get("p95_ms"), "errors": m.get("errors")},
-                        )
+                    # Deduplication 1: Check if an incident is currently active / open
+                    has_open = any(
+                        inc.get("state") in ["OPEN", "APPROVED", "APPLIED"]
+                        or inc.get("status") in ["detected", "codefix_proposed", "OPEN"]
+                        for inc in INCIDENTS
+                    )
+                    if has_open:
+                        continue
 
-                        # Check if evidence contains traceback -> route to codefix pipeline
-                        tb = codefix.parse_traceback()
-                        if tb:
-                            inc["type"] = "codefix"
-                            inc["status"] = "codefix_proposed"
-                            try:
-                                proposal = codefix.propose(incident_id=inc_id)
-                                inc["codefix_proposal"] = proposal
-                                pol = policy.evaluate_policy(
-                                    action="codefix",
-                                    confidence=0.90,
-                                    is_codefix=True,
-                                    memory_matches=memory.recall({"codefix": True, "code_exception": tb.get("exception"), "code_file": tb.get("file")}),
-                                )
-                                inc["policy_decision"] = pol
-                                audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:codefix", details={"summary": proposal.get("summary")})
-                                audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
-                                if pol.get("decision") == "NEEDS_APPROVAL":
-                                    telegram_bot.notify_needs_approval(inc)
-                                with codefix_lock:
-                                    CURRENT_CODEFIX["proposal"] = proposal
-                                    CURRENT_CODEFIX["approved"] = False
-                                    CURRENT_CODEFIX["result"] = None
-                            except Exception as e:
-                                print(f"[watcher] auto-codefix failed: {e}")
+                    # Compute fault signature
+                    tb = codefix.parse_traceback()
+                    if tb:
+                        sig = f"codefix:{tb.get('exception')}:{tb.get('file')}"
+                    else:
+                        active = m.get("active_faults") or []
+                        if active:
+                            sig = f"fault:{active[0]}"
                         else:
-                            # Run diagnose automatically without applying the fix (wait for human approval)
-                            try:
-                                ev, d = dg.diagnose(use_memory=True)
-                                inc["evidence"] = ev
-                                inc["diagnosis"] = d
-                                pol = policy.evaluate_policy(
-                                    action=d.get("action", "unknown"),
-                                    confidence=d.get("confidence", 0.7),
-                                    evidence=ev,
-                                    memory_matches=memory.recall(ev),
-                                )
-                                d["policy_decision"] = pol
-                                inc["policy_decision"] = pol
-                                audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:diagnose", details={"action": d.get("action"), "root_cause": d.get("root_cause")})
-                                audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
-                                if pol.get("decision") == "NEEDS_APPROVAL":
-                                    telegram_bot.notify_needs_approval(inc)
-                            except Exception as e:
-                                print(f"[watcher] auto-diagnose failed: {e}")
+                            sig = f"telemetry:{'p95' if m.get('p95_ms', 0) > 500 else 'err'}"
 
-                        INCIDENTS.append(inc)
+                    # Deduplication 2: Check 60s cooldown after resolution / rejection
+                    cooldown_key = f"{service}:{sig}"
+                    last_closed = max(
+                        INCIDENT_COOLDOWNS.get(cooldown_key, 0),
+                        INCIDENT_COOLDOWNS.get(service, 0),
+                    )
+                    if (now - last_closed) < COOLDOWN_SECONDS:
+                        continue
+
+                    inc_id = f"inc-{uuid.uuid4().hex[:6]}"
+                    inc = {
+                        "id": inc_id,
+                        "service": service,
+                        "signature": sig,
+                        "source": "auto_detected",
+                        "severity": "critical",
+                        "title": "Automated SLO Degradation Alert",
+                        "description": f"Consecutive degradation observed: p95={m.get('p95_ms', 0)}ms, errors={m.get('errors', 0)}",
+                        "tags": ["service:checkout", "source:watcher", f"signature:{sig}"],
+                        "started_at": now,
+                        "created_at": now,
+                        "state": "OPEN",
+                        "status": "detected",
+                        "notified": False,
+                        "detection_snapshot": {
+                            "p95_ms": m.get("p95_ms", 0),
+                            "errors": m.get("errors", 0),
+                        },
+                        "diagnosis": None,
+                        "evidence": None,
+                        "type": "codefix" if tb else "infrastructure",
+                        "codefix_proposal": None,
+                        "policy_decision": None,
+                    }
+                    core.INCIDENT["started"] = now
+                    core.INCIDENT["wrong_attempts"] = 0
+
+                    # Log detected event
+                    audit.record_audit_event(
+                        "detected",
+                        incident_id=inc_id,
+                        actor="system:watcher",
+                        details={"p95_ms": m.get("p95_ms"), "errors": m.get("errors")},
+                    )
+
+                    # Check if evidence contains traceback -> route to codefix pipeline
+                    if tb:
+                        inc["type"] = "codefix"
+                        inc["status"] = "codefix_proposed"
+                        try:
+                            proposal = codefix.propose(incident_id=inc_id)
+                            proposal["incident_id"] = inc_id
+                            inc["codefix_proposal"] = proposal
+                            pol = policy.evaluate_policy(
+                                action="codefix",
+                                confidence=0.90,
+                                is_codefix=True,
+                                memory_matches=memory.recall({"codefix": True, "code_exception": tb.get("exception"), "code_file": tb.get("file")}),
+                            )
+                            inc["policy_decision"] = pol
+                            audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:codefix", details={"summary": proposal.get("summary")})
+                            audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+                            if not inc.get("notified") and pol.get("decision") == "NEEDS_APPROVAL":
+                                inc["notified"] = True
+                                telegram_bot.notify_needs_approval(inc)
+                            with codefix_lock:
+                                CURRENT_CODEFIX["proposal"] = proposal
+                                CURRENT_CODEFIX["approved"] = False
+                                CURRENT_CODEFIX["result"] = None
+                                CURRENT_CODEFIX["incident_id"] = inc_id
+                        except Exception as e:
+                            print(f"[watcher] auto-codefix failed: {e}")
+                    else:
+                        # Run diagnose automatically without applying the fix (wait for human approval)
+                        try:
+                            ev, d = dg.diagnose(use_memory=True)
+                            inc["evidence"] = ev
+                            inc["diagnosis"] = d
+                            pol = policy.evaluate_policy(
+                                action=d.get("action", "unknown"),
+                                confidence=d.get("confidence", 0.7),
+                                evidence=ev,
+                                memory_matches=memory.recall(ev),
+                            )
+                            d["policy_decision"] = pol
+                            inc["policy_decision"] = pol
+                            audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:diagnose", details={"action": d.get("action"), "root_cause": d.get("root_cause")})
+                            audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
+                            if not inc.get("notified") and pol.get("decision") == "NEEDS_APPROVAL":
+                                inc["notified"] = True
+                                telegram_bot.notify_needs_approval(inc)
+                        except Exception as e:
+                            print(f"[watcher] auto-diagnose failed: {e}")
+
+                    INCIDENTS.append(inc)
         except Exception as ex:
             import traceback
             print(f"[watcher exception] {ex}\n{traceback.format_exc()}")
@@ -290,7 +346,19 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
     inc_id = inc_data["id"]
     now = time.time()
     inc_data["started_at"] = now
+    inc_data["created_at"] = now
+    inc_data["state"] = "OPEN"
     inc_data["status"] = "detected"
+    inc_data["notified"] = False
+    m_snap = {}
+    try:
+        m_snap = core.status() if hasattr(core, "status") else {}
+    except Exception:
+        pass
+    inc_data["detection_snapshot"] = {
+        "p95_ms": m_snap.get("p95_ms", 0),
+        "errors": m_snap.get("errors", 0),
+    }
     inc_data["type"] = "infrastructure"
     inc_data["diagnosis"] = None
     inc_data["evidence"] = None
@@ -339,12 +407,14 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
             inc_data["policy_decision"] = pol
             audit.record_audit_event("diagnosed", incident_id=inc_id, actor="agent:codefix", details={"summary": proposal.get("summary")})
             audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
-            if pol.get("decision") == "NEEDS_APPROVAL":
+            if not inc_data.get("notified") and pol.get("decision") == "NEEDS_APPROVAL":
+                inc_data["notified"] = True
                 telegram_bot.notify_needs_approval(inc_data)
             with codefix_lock:
                 CURRENT_CODEFIX["proposal"] = proposal
                 CURRENT_CODEFIX["approved"] = False
                 CURRENT_CODEFIX["result"] = None
+                CURRENT_CODEFIX["incident_id"] = inc_id
         except Exception as e:
             print(f"[ingest] codefix propose failed: {e}")
     else:
@@ -373,15 +443,18 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
             )
             audit.record_audit_event("policy_decision", incident_id=inc_id, actor="policy:engine", details=pol)
 
-            if pol.get("decision") == "NEEDS_APPROVAL":
+            if not inc_data.get("notified") and pol.get("decision") == "NEEDS_APPROVAL":
+                inc_data["notified"] = True
                 telegram_bot.notify_needs_approval(inc_data)
 
             # Auto-apply if policy allows
             if pol.get("decision") == "AUTO_APPLY":
                 policy.record_auto_applied_fix()
+                inc_data["state"] = "APPROVED"
                 audit.record_audit_event("approved", incident_id=inc_id, actor="policy:auto_apply", details={"action": d.get("action")})
                 take_snapshot(inc_id, "infrastructure")
 
+                inc_data["state"] = "APPLIED"
                 audit.record_audit_event("applied", incident_id=inc_id, actor="policy:auto_apply", details={"action": d.get("action")})
                 fix_res = core.apply_fix(d["action"], d, ev, use_memory=True)
 
@@ -408,8 +481,11 @@ async def ingest_alert(request: Request, source: str = "generic", body: dict = B
                         actor="system:auto_rollback",
                         reason=f"Verification failed: {errors_after} errors, p95 {p95_after}ms",
                     )
+                    inc_data["state"] = "ROLLED_BACK"
+                    inc_data["status"] = "rolled_back"
                 elif recovered:
-                    inc_data["status"] = "resolved"
+                    inc_data["state"] = "VERIFIED"
+                    inc_data["status"] = "VERIFIED"
                     inc_data["resolved_at"] = time.time()
                     inc_data["fix_result"] = fix_res
         except Exception as e:
@@ -563,7 +639,9 @@ def diagnose(use_memory: bool = True, source: Optional[str] = None):
             with watcher_lock:
                 for i in INCIDENTS:
                     if i.get("id") == inc_id:
-                        telegram_bot.notify_needs_approval(i)
+                        if not i.get("notified"):
+                            i["notified"] = True
+                            telegram_bot.notify_needs_approval(i)
                         break
 
     return {"evidence": ev, "diagnosis": d, "use_memory": use_memory, "policy": pol}
@@ -578,14 +656,38 @@ def get_incident_by_id(inc_id: str) -> Optional[dict]:
 
 
 def dismiss_incident(inc_id: str, actor: str = "human:operator", reason: str = "") -> dict:
-    with watcher_lock:
-        for inc in INCIDENTS:
-            if inc.get("id") == inc_id:
-                inc["status"] = "dismissed"
-                inc["dismissed_by"] = actor
-                inc["dismissed_reason"] = reason
-    audit.record_audit_event("rejected", incident_id=inc_id, actor=actor, details={"reason": reason or "Dismissed"})
-    return {"status": "dismissed", "incident_id": inc_id}
+    with approval_lock:
+        target_inc = None
+        with watcher_lock:
+            for inc in INCIDENTS:
+                if inc.get("id") == inc_id:
+                    target_inc = inc
+                    break
+
+        if target_inc:
+            current_state = target_inc.get("state", "OPEN")
+            if current_state != "OPEN":
+                return {
+                    "ok": False,
+                    "status": "already_handled",
+                    "message": f"Already handled: {current_state}",
+                    "state": current_state,
+                    "incident_id": inc_id,
+                }
+            target_inc["state"] = "REJECTED"
+            target_inc["status"] = "rejected"
+            target_inc["dismissed_by"] = actor
+            target_inc["dismissed_reason"] = reason
+            now = time.time()
+            target_inc["resolved_at"] = now
+            svc = target_inc.get("service", "checkout")
+            sig = target_inc.get("signature")
+            if sig:
+                INCIDENT_COOLDOWNS[f"{svc}:{sig}"] = now
+            INCIDENT_COOLDOWNS[svc] = now
+
+        audit.record_audit_event("rejected", incident_id=inc_id, actor=actor, details={"reason": reason or "Dismissed"})
+        return {"status": "rejected", "incident_id": inc_id}
 
 
 def apply_infra_fix(
@@ -596,90 +698,223 @@ def apply_infra_fix(
     actor: str = "human:operator",
     inc_id: Optional[str] = None,
 ) -> dict:
-    if not inc_id:
+    with approval_lock:
+        target_inc = None
         with watcher_lock:
-            open_incs = [i for i in INCIDENTS if i.get("status") == "detected"]
-            if open_incs:
-                inc_id = open_incs[-1].get("id")
-    if not inc_id:
-        inc_id = f"inc-{uuid.uuid4().hex[:6]}"
+            if inc_id:
+                for i in INCIDENTS:
+                    if i.get("id") == inc_id:
+                        target_inc = i
+                        break
+            if not target_inc:
+                open_incs = [
+                    i for i in INCIDENTS
+                    if i.get("state") in ["OPEN", "APPROVED", "APPLIED"]
+                    or i.get("status") in ["detected", "codefix_proposed", "OPEN"]
+                ]
+                if open_incs:
+                    target_inc = open_incs[-1]
+                    inc_id = target_inc.get("id")
 
-    audit.record_audit_event("approved", incident_id=inc_id, actor=actor, details={"action": action})
-    take_snapshot(inc_id, "infrastructure")
+        if not inc_id:
+            inc_id = f"inc-{uuid.uuid4().hex[:6]}"
 
-    audit.record_audit_event("applied", incident_id=inc_id, actor=actor, details={"action": action})
-    res = core.apply_fix(action, diag, ev, use_mem)
+        if target_inc:
+            current_state = target_inc.get("state", "OPEN")
+            if current_state != "OPEN":
+                return {
+                    "ok": False,
+                    "status": "already_handled",
+                    "message": f"Already handled: {current_state}",
+                    "state": current_state,
+                    "recovered": current_state == "VERIFIED",
+                    "incident_id": inc_id,
+                }
+            target_inc["state"] = "APPROVED"
+            target_inc["approved_by"] = actor
+            target_inc["approved_at"] = time.time()
 
-    recovered = res.get("recovered", False)
-    before_m = res.get("before", {})
-    after_m = res.get("after", {})
+        audit.record_audit_event("approved", incident_id=inc_id, actor=actor, details={"action": action})
+        take_snapshot(inc_id, "infrastructure")
 
-    audit.record_audit_event(
-        "verified",
-        incident_id=inc_id,
-        actor="system:verification",
-        details={"recovered": recovered, "before": before_m, "after": after_m},
-    )
+        if target_inc:
+            target_inc["state"] = "APPLIED"
 
-    p95_before = before_m.get("p95_ms") or 0
-    p95_after = after_m.get("p95_ms") or 0
-    errors_after = after_m.get("errors", 0)
+        audit.record_audit_event("applied", incident_id=inc_id, actor=actor, details={"action": action})
+        res = core.apply_fix(action, diag, ev, use_mem)
 
-    slo_val = 200 if getattr(core, "FAST_MODE", False) else policy.get_slo_p95_ms()
-    healthy = policy.is_service_healthy(after_m, before_m, slo_p95_ms=slo_val)
-    if not healthy:
-        execute_rollback(
-            inc_id,
-            actor="system:auto_rollback",
-            reason=f"Verification failed: {errors_after} errors, p95 {p95_after}ms",
-        )
-        res["recovered"] = False
-        res["auto_rolled_back"] = True
-    elif recovered:
-        with watcher_lock:
-            for inc in INCIDENTS:
-                if inc.get("id") == inc_id or inc.get("status") == "detected":
-                    inc["status"] = "resolved"
-                    inc["resolved_at"] = time.time()
-                    inc["fix_result"] = res
+        recovered = res.get("recovered", False)
+        before_m = res.get("before", {})
+        after_m = res.get("after", {})
 
-    return res
+        p95_before = (
+            (target_inc.get("detection_snapshot") or {}).get("p95_ms")
+            if target_inc
+            else None
+        ) or before_m.get("p95_ms") or 0
+        p95_after = after_m.get("p95_ms") or 0
+        errors_after = after_m.get("errors", 0)
+
+        res["before"] = {"p95_ms": p95_before, "errors": before_m.get("errors", 0)}
+        res["after"] = {"p95_ms": p95_after, "errors": errors_after}
+
+        slo_val = 200 if getattr(core, "FAST_MODE", False) else policy.get_slo_p95_ms()
+        healthy = policy.is_service_healthy(after_m, before_m, slo_p95_ms=slo_val)
+        if not healthy:
+            execute_rollback(
+                inc_id,
+                actor="system:auto_rollback",
+                reason=f"Verification failed: {errors_after} errors, p95 {p95_after}ms",
+            )
+            audit.record_audit_event(
+                "verified",
+                incident_id=inc_id,
+                actor="system:verification",
+                details={"recovered": False, "before": res["before"], "after": res["after"]},
+            )
+            if target_inc:
+                target_inc["state"] = "ROLLED_BACK"
+                target_inc["status"] = "rolled_back"
+            res["recovered"] = False
+            res["auto_rolled_back"] = True
+        elif recovered:
+            audit.record_audit_event(
+                "verified",
+                incident_id=inc_id,
+                actor="system:verification",
+                details={"recovered": True, "before": res["before"], "after": res["after"]},
+            )
+            now = time.time()
+            if target_inc:
+                target_inc["state"] = "VERIFIED"
+                target_inc["status"] = "VERIFIED"
+                target_inc["resolved_at"] = now
+                target_inc["fix_result"] = res
+                svc = target_inc.get("service", "checkout")
+                sig = target_inc.get("signature")
+                if sig:
+                    INCIDENT_COOLDOWNS[f"{svc}:{sig}"] = now
+                INCIDENT_COOLDOWNS[svc] = now
+            else:
+                with watcher_lock:
+                    for inc in INCIDENTS:
+                        if inc.get("id") == inc_id or inc.get("status") == "detected":
+                            inc["state"] = "VERIFIED"
+                            inc["status"] = "VERIFIED"
+                            inc["resolved_at"] = now
+                            inc["fix_result"] = res
+
+        return res
 
 
 def apply_code_fix(proposal: dict, actor: str = "human:operator") -> dict:
-    inc_id = proposal.get("incident_id") or "inc-active"
-    audit.record_audit_event("approved", incident_id=inc_id, actor=actor, details={"type": "codefix"})
-    take_snapshot(inc_id, "codefix")
-
-    try:
-        audit.record_audit_event("applied", incident_id=inc_id, actor=actor, details={"type": "codefix"})
-        res = codefix.approve(proposal)
-
-        recovered = bool(res.get("recovered"))
-        pr_url = res.get("pr_url") or (res.get("git", {}).get("pr_url"))
-        audit.record_audit_event("verified", incident_id=inc_id, actor="system:verification", details=res)
-
-        if not recovered:
-            execute_rollback(inc_id, actor="system:auto_rollback", reason="Codefix verification failed")
-            res["auto_rolled_back"] = True
-
-        with codefix_lock:
-            CURRENT_CODEFIX["approved"] = True
-            CURRENT_CODEFIX["result"] = res
-            if pr_url:
-                CURRENT_CODEFIX["pr_url"] = pr_url
+    with approval_lock:
+        inc_id = proposal.get("incident_id")
+        target_inc = None
         with watcher_lock:
-            for inc in INCIDENTS:
-                if inc.get("id") == inc_id or inc.get("status") in ["detected", "codefix_proposed"]:
-                    inc["status"] = "resolved" if recovered else "failed"
-                    inc["resolved_at"] = time.time()
-                    inc["codefix_result"] = res
+            if inc_id:
+                for i in INCIDENTS:
+                    if i.get("id") == inc_id:
+                        target_inc = i
+                        break
+            if not target_inc:
+                open_incs = [
+                    i for i in INCIDENTS
+                    if i.get("state") in ["OPEN", "APPROVED", "APPLIED"]
+                    or i.get("status") in ["detected", "codefix_proposed", "OPEN"]
+                ]
+                if open_incs:
+                    target_inc = open_incs[-1]
+                    inc_id = target_inc.get("id")
+
+        if not inc_id:
+            inc_id = "inc-active"
+
+        if target_inc:
+            current_state = target_inc.get("state", "OPEN")
+            if current_state != "OPEN":
+                return {
+                    "ok": False,
+                    "status": "already_handled",
+                    "message": f"Already handled: {current_state}",
+                    "state": current_state,
+                    "recovered": current_state == "VERIFIED",
+                    "incident_id": inc_id,
+                }
+            target_inc["state"] = "APPROVED"
+            target_inc["approved_by"] = actor
+            target_inc["approved_at"] = time.time()
+
+        audit.record_audit_event("approved", incident_id=inc_id, actor=actor, details={"type": "codefix"})
+        take_snapshot(inc_id, "codefix")
+
+        if target_inc:
+            target_inc["state"] = "APPLIED"
+
+        try:
+            audit.record_audit_event("applied", incident_id=inc_id, actor=actor, details={"type": "codefix"})
+            res = codefix.approve(proposal)
+
+            recovered = bool(res.get("recovered"))
+            pr_url = res.get("pr_url") or (res.get("git", {}).get("pr_url"))
+
+            before_m = res.get("before", {})
+            after_m = res.get("after", {})
+            p95_before = (
+                (target_inc.get("detection_snapshot") or {}).get("p95_ms")
+                if target_inc
+                else None
+            ) or before_m.get("p95_ms") or 0
+            p95_after = after_m.get("p95_ms") or res.get("metrics", {}).get("p95_ms", 0)
+            errors_after = after_m.get("errors", 0) if "errors" in after_m else res.get("metrics", {}).get("errors", 0)
+
+            res["before"] = {"p95_ms": p95_before, "errors": before_m.get("errors", 0)}
+            res["after"] = {"p95_ms": p95_after, "errors": errors_after}
+
+            audit.record_audit_event("verified", incident_id=inc_id, actor="system:verification", details=res)
+
+            if not recovered:
+                execute_rollback(inc_id, actor="system:auto_rollback", reason="Codefix verification failed")
+                if target_inc:
+                    target_inc["state"] = "ROLLED_BACK"
+                    target_inc["status"] = "rolled_back"
+                res["auto_rolled_back"] = True
+            else:
+                now = time.time()
+                if target_inc:
+                    target_inc["state"] = "VERIFIED"
+                    target_inc["status"] = "VERIFIED"
+                    target_inc["resolved_at"] = now
+                    target_inc["codefix_result"] = res
                     if pr_url:
-                        inc["pr_url"] = pr_url
-        return res
-    except Exception as e:
-        execute_rollback(inc_id, actor="system:auto_rollback", reason=f"Exception during codefix: {e}")
-        raise e
+                        target_inc["pr_url"] = pr_url
+                    svc = target_inc.get("service", "checkout")
+                    sig = target_inc.get("signature")
+                    if sig:
+                        INCIDENT_COOLDOWNS[f"{svc}:{sig}"] = now
+                    INCIDENT_COOLDOWNS[svc] = now
+
+            with codefix_lock:
+                CURRENT_CODEFIX["approved"] = True
+                CURRENT_CODEFIX["result"] = res
+                if pr_url:
+                    CURRENT_CODEFIX["pr_url"] = pr_url
+            with watcher_lock:
+                for inc in INCIDENTS:
+                    if inc.get("id") == inc_id or inc.get("status") in ["detected", "codefix_proposed"]:
+                        inc["state"] = "VERIFIED" if recovered else "ROLLED_BACK"
+                        inc["status"] = "VERIFIED" if recovered else "failed"
+                        inc["resolved_at"] = time.time()
+                        inc["codefix_result"] = res
+                        if pr_url:
+                            inc["pr_url"] = pr_url
+            return res
+        except Exception as e:
+            execute_rollback(inc_id, actor="system:auto_rollback", reason=f"Exception during codefix: {e}")
+            if target_inc:
+                target_inc["state"] = "ROLLED_BACK"
+                target_inc["status"] = "failed"
+            raise e
 
 
 def execute_approve_by_id(inc_id: str, actor: str = "human:operator") -> dict:
@@ -762,15 +997,17 @@ def reset_demo_data():
         except Exception:
             pass
 
-    # 5. Clear runtime incidents, snapshots, codefix
+    # 5. Clear runtime incidents, snapshots, codefix, cooldowns
     with watcher_lock:
         INCIDENTS.clear()
+        INCIDENT_COOLDOWNS.clear()
     with snapshot_lock:
         SNAPSHOTS.clear()
     with codefix_lock:
         CURRENT_CODEFIX["proposal"] = None
         CURRENT_CODEFIX["approved"] = False
         CURRENT_CODEFIX["result"] = None
+        CURRENT_CODEFIX["incident_id"] = None
 
     return {"status": "ok", "message": "Demo data reset successfully"}
 
@@ -820,13 +1057,34 @@ def get_benchmark_status():
 @app.post("/api/codefix/propose")
 def propose_codefix(body: dict = Body(default={})):
     incident_id = body.get("incident_id")
+    target_inc = None
+    with watcher_lock:
+        if incident_id:
+            for inc in INCIDENTS:
+                if inc.get("id") == incident_id:
+                    target_inc = inc
+                    break
+        if not target_inc:
+            open_incs = [
+                i for i in INCIDENTS
+                if i.get("state") in ["OPEN", "APPROVED", "APPLIED"]
+                or i.get("status") in ["detected", "codefix_proposed", "OPEN"]
+            ]
+            if open_incs:
+                target_inc = open_incs[-1]
+                incident_id = target_inc.get("id")
+
     proposal = codefix.propose(incident_id=incident_id)
     if "error" in proposal:
         raise HTTPException(400, proposal["error"])
+    if incident_id:
+        proposal["incident_id"] = incident_id
+
     with codefix_lock:
         CURRENT_CODEFIX["proposal"] = proposal
         CURRENT_CODEFIX["approved"] = False
         CURRENT_CODEFIX["result"] = None
+        CURRENT_CODEFIX["incident_id"] = proposal.get("incident_id")
 
     # Evaluate policy for codefix
     pol = policy.evaluate_policy(
@@ -836,7 +1094,13 @@ def propose_codefix(body: dict = Body(default={})):
     )
     proposal["policy_decision"] = pol
 
-    if pol.get("decision") == "NEEDS_APPROVAL":
+    if target_inc:
+        target_inc["codefix_proposal"] = proposal
+        target_inc["policy_decision"] = pol
+        if not target_inc.get("notified") and pol.get("decision") == "NEEDS_APPROVAL":
+            target_inc["notified"] = True
+            telegram_bot.notify_needs_approval(target_inc)
+    elif pol.get("decision") == "NEEDS_APPROVAL":
         telegram_bot.notify_needs_approval({
             "id": proposal.get("incident_id") or "inc-codefix",
             "service": "checkout",

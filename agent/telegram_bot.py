@@ -189,7 +189,12 @@ def format_needs_approval_message(incident: Dict[str, Any]) -> tuple[str, Dict[s
 def notify_needs_approval(incident: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """
     Send an approval notification to the allowlisted Telegram chat if configured.
+    Guarantees exactly one notification per incident.
     """
+    if incident.get("notified"):
+        return None
+    incident["notified"] = True
+
     if not is_configured():
         return None
 
@@ -240,6 +245,13 @@ def handle_callback_query(cq: Dict[str, Any]) -> Dict[str, Any]:
     if data.startswith("approve:"):
         inc_id = data.split(":", 1)[1]
         exec_res = api.execute_approve_by_id(inc_id, actor=actor)
+        if exec_res.get("status") == "already_handled":
+            state = exec_res.get("state", "UNKNOWN")
+            outcome_text = f"Already handled: {state}"
+            if message_id:
+                edit_message_text(chat_id, message_id, outcome_text, reply_markup=None)
+            return {"status": "already_handled", "incident_id": inc_id, "state": state}
+
         recovered = exec_res.get("recovered", False)
         before_m = exec_res.get("before", {})
         after_m = exec_res.get("after", {})
@@ -250,7 +262,8 @@ def handle_callback_query(cq: Dict[str, Any]) -> Dict[str, Any]:
 
         if recovered:
             outcome_text = (
-                f"✅ Fix Applied & Verified in Production\n\n"
+                f"Approved by {actor}. Applied. Verified: p95 {p95_after}ms, {errors_after} errors\n\n"
+                f"Fix Applied & Verified in Production\n"
                 f"Incident: {inc_id}\n"
                 f"Approved by: {actor}\n"
                 f"Status: RECOVERED\n\n"
@@ -260,13 +273,6 @@ def handle_callback_query(cq: Dict[str, Any]) -> Dict[str, Any]:
             )
             if pr_url:
                 outcome_text += f"\nPull Request: {pr_url}\n"
-
-            # Provide Rollback button
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "🔄 Rollback Fix", "callback_data": f"rollback:{inc_id}"}]
-                ]
-            }
         else:
             outcome_text = (
                 f"⚠️ Fix Applied but Verification Failed\n\n"
@@ -275,15 +281,20 @@ def handle_callback_query(cq: Dict[str, Any]) -> Dict[str, Any]:
                 f"Action taken: Auto-rolled back to pre-incident state.\n\n"
                 f"Metrics after fix: p95={p95_after}ms, errors={errors_after}"
             )
-            keyboard = None
 
         if message_id:
-            edit_message_text(chat_id, message_id, outcome_text, reply_markup=keyboard)
+            edit_message_text(chat_id, message_id, outcome_text, reply_markup=None)
         return {"status": "approved", "incident_id": inc_id, "result": exec_res}
 
     elif data.startswith("reject:"):
         inc_id = data.split(":", 1)[1]
-        api.dismiss_incident(inc_id, actor=actor, reason="Rejected via Telegram")
+        rej_res = api.dismiss_incident(inc_id, actor=actor, reason="Rejected via Telegram")
+        if rej_res.get("status") == "already_handled":
+            state = rej_res.get("state", "UNKNOWN")
+            outcome_text = f"Already handled: {state}"
+            if message_id:
+                edit_message_text(chat_id, message_id, outcome_text, reply_markup=None)
+            return {"status": "already_handled", "incident_id": inc_id, "state": state}
         outcome_text = (
             f"❌ Incident Rejected\n\n"
             f"Incident: {inc_id}\n"

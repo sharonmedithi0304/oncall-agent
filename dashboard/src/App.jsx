@@ -11,6 +11,7 @@ import {
   ArrowUpRight,
   X,
   Siren,
+  CheckCircle2,
   HardDrive,
   Code2,
   Filter,
@@ -109,7 +110,22 @@ export default function App() {
         ])
         if (!alive) return
         setSt(s)
-        if (Array.isArray(incList)) setIncidents(incList)
+        if (Array.isArray(incList)) {
+          setIncidents(incList)
+          const active = incList.find(
+            (i) => ['OPEN', 'APPROVED', 'APPLIED'].includes(i.state) || ['detected', 'codefix_proposed'].includes(i.status)
+          )
+          const target = active || (incList.length > 0 ? incList[incList.length - 1] : null)
+          if (target?.codefix_proposal) {
+            setCodefixProposal(target.codefix_proposal)
+          }
+          if (target?.codefix_result) {
+            setCodefixResult(target.codefix_result)
+          }
+          if (target?.fix_result) {
+            setFixes((f) => ({ ...f, on: target.fix_result }))
+          }
+        }
         if (s.online) setHist((h) => [...h.slice(-29), s.p95_ms])
         if (cfStatus?.proposal && !codefixProposal) {
           setCodefixProposal(cfStatus.proposal)
@@ -122,7 +138,7 @@ export default function App() {
     tick()
     refreshMemory()
     refreshServices()
-    const id = setInterval(tick, 1500)
+    const id = setInterval(tick, 1000)
     return () => {
       alive = false
       clearInterval(id)
@@ -207,7 +223,14 @@ export default function App() {
     (i) => selectedService === 'all' || (i.service || 'checkout') === selectedService
   )
 
-  const detectedIncident = filteredIncidents.find((i) => i.status === 'detected' || i.status === 'codefix_proposed')
+  const activeIncident = filteredIncidents.find(
+    (i) => ['OPEN', 'APPROVED', 'APPLIED'].includes(i.state) || ['detected', 'codefix_proposed'].includes(i.status)
+  )
+  const latestIncident = filteredIncidents.length > 0 ? filteredIncidents[filteredIncidents.length - 1] : null
+  const currentIncident = activeIncident || latestIncident
+  const isVerified = currentIncident && (currentIncident.state === 'VERIFIED' || currentIncident.status === 'VERIFIED')
+
+  const detectedIncident = currentIncident
 
   const openDetectedIncident = (inc) => {
     if (inc.type === 'codefix' && inc.codefix_proposal) {
@@ -232,13 +255,21 @@ export default function App() {
   const evidence = (diag.on || diag.off)?.evidence
   const canDiagnose = st.online && (st.fault || st.errors > 0 || st.p95_ms > 500)
 
-  const steps = [
-    { label: 'Detect', state: degraded || anyDiag || detectedIncident ? 'done' : 'idle' },
-    { label: 'Diagnose', state: busy === 'on' || busy === 'off' ? 'active' : anyDiag ? 'done' : 'idle' },
-    { label: 'Approve', state: anyFix ? 'done' : anyDiag ? 'active' : 'idle' },
-    { label: 'Apply fix', state: busy.startsWith('fix') ? 'active' : anyFix ? 'done' : 'idle' },
-    { label: 'Verify', state: anyFix ? (recovered ? 'done' : 'bad') : 'idle' },
-  ]
+  const steps = isVerified
+    ? [
+        { label: 'Detect', state: 'done' },
+        { label: 'Diagnose', state: 'done' },
+        { label: 'Approve', state: 'done' },
+        { label: 'Apply fix', state: 'done' },
+        { label: 'Verify', state: 'done' },
+      ]
+    : [
+        { label: 'Detect', state: degraded || anyDiag || activeIncident ? 'done' : 'idle' },
+        { label: 'Diagnose', state: busy === 'on' || busy === 'off' ? 'active' : anyDiag ? 'done' : 'idle' },
+        { label: 'Approve', state: anyFix || currentIncident?.state === 'APPROVED' ? 'done' : anyDiag ? 'active' : 'idle' },
+        { label: 'Apply fix', state: busy.startsWith('fix') ? 'active' : anyFix || currentIncident?.state === 'APPLIED' ? 'done' : 'idle' },
+        { label: 'Verify', state: anyFix ? (recovered ? 'done' : 'bad') : 'idle' },
+      ]
 
   const handleResetDemoData = () => {
     resetRun()
@@ -332,24 +363,38 @@ export default function App() {
                 <motion.div
                   initial={{ opacity: 0, y: -8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className={`glass-card rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 shadow-lg ${detectedIncident.type === 'codefix'
+                  className={`glass-card rounded-2xl p-4 flex items-center justify-between flex-wrap gap-3 shadow-lg ${
+                    isVerified
+                      ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200 shadow-emerald-500/10'
+                      : detectedIncident.type === 'codefix'
                       ? 'border-indigo-500/40 bg-indigo-500/15 text-indigo-200 shadow-indigo-500/10'
                       : 'border-amber-400/40 bg-amber-500/10 text-amber-200 shadow-amber-500/10'
-                    }`}
+                  }`}
                 >
                   <div className="flex items-center gap-3">
                     <div
-                      className={`h-9 w-9 rounded-xl flex items-center justify-center ${detectedIncident.type === 'codefix'
+                      className={`h-9 w-9 rounded-xl flex items-center justify-center ${
+                        isVerified
+                          ? 'bg-emerald-500/20 text-emerald-300'
+                          : detectedIncident.type === 'codefix'
                           ? 'bg-indigo-500/25 text-indigo-300'
                           : 'bg-amber-500/20 text-amber-300'
-                        }`}
+                      }`}
                     >
-                      <Siren size={20} className="animate-pulse" />
+                      {isVerified ? (
+                        <CheckCircle2 size={20} className="text-emerald-400" />
+                      ) : (
+                        <Siren size={20} className="animate-pulse" />
+                      )}
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <p className="font-semibold text-white">
-                          {detectedIncident.type === 'codefix' ? 'Code Bug Incident' : 'Infrastructure Incident'}
+                          {isVerified
+                            ? 'Resolved'
+                            : detectedIncident.type === 'codefix'
+                            ? 'Code Bug Incident'
+                            : 'Infrastructure Incident'}
                         </p>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-white/10 text-white font-mono">
                           {detectedIncident.id}
@@ -358,19 +403,30 @@ export default function App() {
                         <span className="text-xs px-2 py-0.5 rounded-full font-mono bg-cyan-400/15 text-cyan-300 border border-cyan-400/30">
                           svc: {detectedIncident.service || 'checkout'}
                         </span>
-                        {detectedIncident.policy_decision && (
+                        {isVerified ? (
+                          <span className="text-xs px-2 py-0.5 rounded-full font-semibold border bg-emerald-400/10 border-emerald-400/30 text-emerald-300">
+                            Status: VERIFIED
+                          </span>
+                        ) : detectedIncident.policy_decision ? (
                           <span
-                            className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${detectedIncident.policy_decision.decision === 'AUTO_APPLY'
+                            className={`text-xs px-2 py-0.5 rounded-full font-semibold border ${
+                              detectedIncident.policy_decision.decision === 'AUTO_APPLY'
                                 ? 'bg-emerald-400/10 border-emerald-400/30 text-emerald-300'
                                 : 'bg-amber-400/10 border-amber-400/30 text-amber-300'
-                              }`}
+                            }`}
                           >
                             Policy: {detectedIncident.policy_decision.decision}
                           </span>
-                        )}
+                        ) : null}
                       </div>
                       <p className="text-xs text-white/70 mt-0.5">
-                        {detectedIncident.title || 'Incident detected by telemetry watcher.'}
+                        {isVerified
+                          ? (detectedIncident.codefix_result?.metrics?.p95_ms
+                              ? `Fix applied and verified: p95 ${detectedIncident.codefix_result.metrics.p95_ms}ms, ${detectedIncident.codefix_result.metrics.errors} errors`
+                              : detectedIncident.fix_result?.after?.p95_ms
+                              ? `Fix applied and verified: p95 ${detectedIncident.fix_result.after.p95_ms}ms, ${detectedIncident.fix_result.after.errors} errors`
+                              : 'Incident resolved & verified in production. All SLO checks passing.')
+                          : (detectedIncident.title || 'Incident detected by telemetry watcher.')}
                       </p>
                     </div>
                   </div>
@@ -386,13 +442,15 @@ export default function App() {
                         <GitPullRequest size={13} /> View PR <ExternalLink size={12} />
                       </a>
                     )}
-                    <button
-                      onClick={() => openDetectedIncident(detectedIncident)}
-                      className="px-4 py-2 rounded-xl bg-white text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md"
-                    >
-                      {detectedIncident.type === 'codefix' ? <Code2 size={14} /> : <Brain size={14} />}
-                      {detectedIncident.type === 'codefix' ? 'View Code Fix Patch' : 'View Diagnosis'}
-                    </button>
+                    {!isVerified && (
+                      <button
+                        onClick={() => openDetectedIncident(detectedIncident)}
+                        className="px-4 py-2 rounded-xl bg-white text-slate-950 font-semibold text-xs hover:brightness-110 transition flex items-center gap-1.5 shadow-md"
+                      >
+                        {detectedIncident.type === 'codefix' ? <Code2 size={14} /> : <Brain size={14} />}
+                        {detectedIncident.type === 'codefix' ? 'View Code Fix Patch' : 'View Diagnosis'}
+                      </button>
+                    )}
                     <button
                       onClick={() => handleRollback(detectedIncident.id)}
                       disabled={rollingBack}
@@ -476,7 +534,7 @@ export default function App() {
                 <Pipeline steps={steps} />
               </div>
 
-              {codefixProposal && (
+              {(currentIncident?.codefix_proposal || codefixProposal) && (
                 <div id="codefix-section" className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-white">
@@ -485,11 +543,21 @@ export default function App() {
                     <span className="text-xs text-white/50">Verified in sandbox pytest</span>
                   </div>
                   <CodeFixCard
-                    proposal={codefixProposal}
+                    proposal={
+                      currentIncident?.codefix_proposal || {
+                        ...codefixProposal,
+                        incident_id: currentIncident?.id || codefixProposal?.incident_id,
+                      }
+                    }
                     applying={codefixApplying}
                     onApprove={approveCodefix}
-                    result={codefixResult}
-                    onRollback={() => handleRollback(codefixProposal.incident_id)}
+                    result={codefixResult || currentIncident?.codefix_result}
+                    onRollback={() =>
+                      handleRollback(
+                        (currentIncident?.codefix_proposal || codefixProposal)?.incident_id ||
+                          currentIncident?.id
+                      )
+                    }
                     rollingBack={rollingBack}
                   />
                 </div>
